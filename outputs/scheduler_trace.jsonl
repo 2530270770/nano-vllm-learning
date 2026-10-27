@@ -1,0 +1,64 @@
+{"event": "request_added", "step": 0, "seq_id": 1, "waiting": 1, "running": 0, "free_blocks": 111, "total_blocks": 111}
+{"event": "request_added", "step": 0, "seq_id": 2, "waiting": 2, "running": 0, "free_blocks": 111, "total_blocks": 111}
+{"event": "request_added", "step": 0, "seq_id": 3, "waiting": 3, "running": 0, "free_blocks": 111, "total_blocks": 111}
+{"event": "request_added", "step": 0, "seq_id": 4, "waiting": 4, "running": 0, "free_blocks": 111, "total_blocks": 111}
+{"event": "schedule_start", "step": 0, "waiting": 4, "running": 0, "free_blocks": 111, "total_blocks": 111}
+{"event": "schedule", "step": 0, "phase": "prefill", "waiting": 3, "running": 1, "scheduled_seq_ids": [1], "batched_tokens": 6, "free_blocks": 110, "total_blocks": 111}
+{"event": "postprocess", "step": 0, "waiting": 3, "running": 1, "finished_seq_ids": [], "free_blocks": 110, "total_blocks": 111}
+{"event": "schedule_start", "step": 1, "waiting": 3, "running": 1, "free_blocks": 110, "total_blocks": 111}
+{"event": "schedule", "step": 1, "phase": "prefill", "waiting": 2, "running": 2, "scheduled_seq_ids": [2], "batched_tokens": 7, "free_blocks": 109, "total_blocks": 111}
+{"event": "postprocess", "step": 1, "waiting": 2, "running": 2, "finished_seq_ids": [], "free_blocks": 109, "total_blocks": 111}
+{"event": "schedule_start", "step": 2, "waiting": 2, "running": 2, "free_blocks": 109, "total_blocks": 111}
+{"event": "schedule", "step": 2, "phase": "prefill", "waiting": 1, "running": 3, "scheduled_seq_ids": [3], "batched_tokens": 6, "free_blocks": 108, "total_blocks": 111}
+{"event": "postprocess", "step": 2, "waiting": 1, "running": 3, "finished_seq_ids": [], "free_blocks": 108, "total_blocks": 111}
+{"event": "schedule_start", "step": 3, "waiting": 1, "running": 3, "free_blocks": 108, "total_blocks": 111}
+{"event": "schedule", "step": 3, "phase": "prefill", "waiting": 0, "running": 4, "scheduled_seq_ids": [4], "batched_tokens": 5, "free_blocks": 107, "total_blocks": 111}
+{"event": "postprocess", "step": 3, "waiting": 0, "running": 4, "finished_seq_ids": [], "free_blocks": 107, "total_blocks": 111}
+{"event": "schedule_start", "step": 4, "waiting": 0, "running": 4, "free_blocks": 107, "total_blocks": 111}
+{"event": "schedule", "step": 4, "phase": "decode", "waiting": 0, "running": 4, "scheduled_seq_ids": [1], "batched_tokens": 1, "free_blocks": 107, "total_blocks": 111}
+{"event": "postprocess", "step": 4, "waiting": 0, "running": 4, "finished_seq_ids": [], "free_blocks": 107, "total_blocks": 111}
+{"event": "schedule_start", "step": 5, "waiting": 0, "running": 4, "free_blocks": 107, "total_blocks": 111}
+{"event": "schedule", "step": 5, "phase": "decode", "waiting": 0, "running": 4, "scheduled_seq_ids": [1], "batched_tokens": 1, "free_blocks": 107, "total_blocks": 111}
+{"event": "postprocess", "step": 5, "waiting": 0, "running": 4, "finished_seq_ids": [], "free_blocks": 107, "total_blocks": 111}
+{"event": "schedule_start", "step": 6, "waiting": 0, "running": 4, "free_blocks": 107, "total_blocks": 111}
+{"event": "schedule", "step": 6, "phase": "decode", "waiting": 0, "running": 4, "scheduled_seq_ids": [1], "batched_tokens": 1, "free_blocks": 107, "total_blocks": 111}
+{"event": "postprocess", "step": 6, "waiting": 0, "running": 4, "finished_seq_ids": [], "free_blocks": 107, "total_blocks": 111}
+{"event": "schedule_start", "step": 7, "waiting": 0, "running": 4, "free_blocks": 107, "total_blocks": 111}
+{"event": "schedule", "step": 7, "phase": "decode", "waiting": 0, "running": 4, "scheduled_seq_ids": [1], "batched_tokens": 1, "free_blocks": 107, "total_blocks": 111}
+{"event": "postprocess", "step": 7, "waiting": 0, "running": 3, "finished_seq_ids": [1], "free_blocks": 108, "total_blocks": 111}
+{"event": "schedule_start", "step": 8, "waiting": 0, "running": 3, "free_blocks": 108, "total_blocks": 111}
+{"event": "schedule", "step": 8, "phase": "decode", "waiting": 0, "running": 3, "scheduled_seq_ids": [2], "batched_tokens": 1, "free_blocks": 108, "total_blocks": 111}
+{"event": "postprocess", "step": 8, "waiting": 0, "running": 3, "finished_seq_ids": [], "free_blocks": 108, "total_blocks": 111}
+{"event": "schedule_start", "step": 9, "waiting": 0, "running": 3, "free_blocks": 108, "total_blocks": 111}
+{"event": "schedule", "step": 9, "phase": "decode", "waiting": 0, "running": 3, "scheduled_seq_ids": [2], "batched_tokens": 1, "free_blocks": 108, "total_blocks": 111}
+{"event": "postprocess", "step": 9, "waiting": 0, "running": 3, "finished_seq_ids": [], "free_blocks": 108, "total_blocks": 111}
+{"event": "schedule_start", "step": 10, "waiting": 0, "running": 3, "free_blocks": 108, "total_blocks": 111}
+{"event": "schedule", "step": 10, "phase": "decode", "waiting": 0, "running": 3, "scheduled_seq_ids": [2], "batched_tokens": 1, "free_blocks": 108, "total_blocks": 111}
+{"event": "postprocess", "step": 10, "waiting": 0, "running": 3, "finished_seq_ids": [], "free_blocks": 108, "total_blocks": 111}
+{"event": "schedule_start", "step": 11, "waiting": 0, "running": 3, "free_blocks": 108, "total_blocks": 111}
+{"event": "schedule", "step": 11, "phase": "decode", "waiting": 0, "running": 3, "scheduled_seq_ids": [2], "batched_tokens": 1, "free_blocks": 108, "total_blocks": 111}
+{"event": "postprocess", "step": 11, "waiting": 0, "running": 2, "finished_seq_ids": [2], "free_blocks": 109, "total_blocks": 111}
+{"event": "schedule_start", "step": 12, "waiting": 0, "running": 2, "free_blocks": 109, "total_blocks": 111}
+{"event": "schedule", "step": 12, "phase": "decode", "waiting": 0, "running": 2, "scheduled_seq_ids": [3], "batched_tokens": 1, "free_blocks": 109, "total_blocks": 111}
+{"event": "postprocess", "step": 12, "waiting": 0, "running": 2, "finished_seq_ids": [], "free_blocks": 109, "total_blocks": 111}
+{"event": "schedule_start", "step": 13, "waiting": 0, "running": 2, "free_blocks": 109, "total_blocks": 111}
+{"event": "schedule", "step": 13, "phase": "decode", "waiting": 0, "running": 2, "scheduled_seq_ids": [3], "batched_tokens": 1, "free_blocks": 109, "total_blocks": 111}
+{"event": "postprocess", "step": 13, "waiting": 0, "running": 2, "finished_seq_ids": [], "free_blocks": 109, "total_blocks": 111}
+{"event": "schedule_start", "step": 14, "waiting": 0, "running": 2, "free_blocks": 109, "total_blocks": 111}
+{"event": "schedule", "step": 14, "phase": "decode", "waiting": 0, "running": 2, "scheduled_seq_ids": [3], "batched_tokens": 1, "free_blocks": 109, "total_blocks": 111}
+{"event": "postprocess", "step": 14, "waiting": 0, "running": 2, "finished_seq_ids": [], "free_blocks": 109, "total_blocks": 111}
+{"event": "schedule_start", "step": 15, "waiting": 0, "running": 2, "free_blocks": 109, "total_blocks": 111}
+{"event": "schedule", "step": 15, "phase": "decode", "waiting": 0, "running": 2, "scheduled_seq_ids": [3], "batched_tokens": 1, "free_blocks": 109, "total_blocks": 111}
+{"event": "postprocess", "step": 15, "waiting": 0, "running": 1, "finished_seq_ids": [3], "free_blocks": 110, "total_blocks": 111}
+{"event": "schedule_start", "step": 16, "waiting": 0, "running": 1, "free_blocks": 110, "total_blocks": 111}
+{"event": "schedule", "step": 16, "phase": "decode", "waiting": 0, "running": 1, "scheduled_seq_ids": [4], "batched_tokens": 1, "free_blocks": 110, "total_blocks": 111}
+{"event": "postprocess", "step": 16, "waiting": 0, "running": 1, "finished_seq_ids": [], "free_blocks": 110, "total_blocks": 111}
+{"event": "schedule_start", "step": 17, "waiting": 0, "running": 1, "free_blocks": 110, "total_blocks": 111}
+{"event": "schedule", "step": 17, "phase": "decode", "waiting": 0, "running": 1, "scheduled_seq_ids": [4], "batched_tokens": 1, "free_blocks": 110, "total_blocks": 111}
+{"event": "postprocess", "step": 17, "waiting": 0, "running": 1, "finished_seq_ids": [], "free_blocks": 110, "total_blocks": 111}
+{"event": "schedule_start", "step": 18, "waiting": 0, "running": 1, "free_blocks": 110, "total_blocks": 111}
+{"event": "schedule", "step": 18, "phase": "decode", "waiting": 0, "running": 1, "scheduled_seq_ids": [4], "batched_tokens": 1, "free_blocks": 110, "total_blocks": 111}
+{"event": "postprocess", "step": 18, "waiting": 0, "running": 1, "finished_seq_ids": [], "free_blocks": 110, "total_blocks": 111}
+{"event": "schedule_start", "step": 19, "waiting": 0, "running": 1, "free_blocks": 110, "total_blocks": 111}
+{"event": "schedule", "step": 19, "phase": "decode", "waiting": 0, "running": 1, "scheduled_seq_ids": [4], "batched_tokens": 1, "free_blocks": 110, "total_blocks": 111}
+{"event": "postprocess", "step": 19, "waiting": 0, "running": 0, "finished_seq_ids": [4], "free_blocks": 111, "total_blocks": 111}

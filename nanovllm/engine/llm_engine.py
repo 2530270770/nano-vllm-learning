@@ -4,7 +4,8 @@ from time import perf_counter
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 import torch.multiprocessing as mp
-
+import json
+from pathlib import Path
 from nanovllm.config import Config
 from nanovllm.sampling_params import SamplingParams
 from nanovllm.engine.sequence import Sequence
@@ -15,6 +16,8 @@ from nanovllm.engine.model_runner import ModelRunner
 class LLMEngine:
 
     def __init__(self, model, **kwargs):
+        trace_path = kwargs.pop("trace_path", None) # 若有则取出,不影响config原有配置逻辑
+        
         config_fields = {field.name for field in fields(Config)}
         config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}
         config = Config(model, **config_kwargs)
@@ -31,14 +34,40 @@ class LLMEngine:
         self.model_runner = ModelRunner(config, 0, self.events)
         self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
         config.eos = self.tokenizer.eos_token_id
-        self.scheduler = Scheduler(config)
+        # self.scheduler = Scheduler(config)
+
+        self.trace_file = None
+
+        if trace_path is not None:
+            trace_path = Path(trace_path)
+            trace_path.parent.mkdir(parents=True, exist_ok=True)
+            self.trace_file = trace_path.open("a", encoding="utf-8")
+
+        self.scheduler = Scheduler(
+            config,
+            event_callback=self.write_trace_event if self.trace_file else None,
+        )
+
         atexit.register(self.exit)
+
+    def write_trace_event(self, event: dict):
+        if self.trace_file is None:
+            return
+
+        self.trace_file.write(
+            json.dumps(event, ensure_ascii=False) + "\n"
+        )
+        self.trace_file.flush()
 
     def exit(self):
         self.model_runner.call("exit")
         del self.model_runner
         for p in self.ps:
             p.join()
+
+        if self.trace_file is not None: #日志文件的生命周期由llmengine统一管理。
+            self.trace_file.close()
+            self.trace_file = None
 
     def add_request(self, prompt: str | list[int], sampling_params: SamplingParams):
         if isinstance(prompt, str):
