@@ -1,0 +1,46 @@
+run_id,request_id,seq_id,prompt_tokens,output_tokens,ttft_s,tpot_s,e2e_s,output_tokens_per_s,decode_tokens_per_s,finished,generated_text
+1,0,8,128,32,0.05130077799913124,0.04096347774189311,1.3211685879978177,24.2209815542881,24.411989780284348,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 1000. Explain transformer inference, attention, KV cache"
+1,1,9,128,32,0.05128827500084299,0.04096347774189311,1.3211560849995294,24.22121077390443,24.411989780284348,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 1001. Explain transformer inference, attention, KV cache"
+1,2,10,128,32,0.051285960002132924,0.04096347774189311,1.3211537700008193,24.221253215649647,24.411989780284348,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 1002. Explain transformer inference, attention, KV cache"
+1,3,11,128,32,0.05128399699970032,0.04096347774189311,1.3211518069983867,24.22128920423077,24.411989780284348,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 1003. Explain transformer inference, attention, KV cache"
+2,0,12,128,32,0.05111500499697286,0.03990560100001242,1.2881886359973578,24.84108235842692,25.059138941415487,True," Explain transformer inference, attention, KV cache, prefill and decode performance.
+Benchmark sample 2000. Explain transformer inference, attention, KV cache,"
+2,1,13,128,32,0.051105857997754356,0.03990560100001242,1.2881794889981393,24.841258747946284,25.059138941415487,True," Explain transformer inference, attention, KV cache, prefill and decode performance.
+
+Okay, so I need to explain transformer inference, attention, KV cache, prefill"
+2,2,14,128,32,0.0511041749996366,0.03990560100001242,1.2881778060000215,24.84129120293155,25.059138941415487,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 2002. Explain transformer inference, attention, KV cache"
+2,3,15,128,32,0.051102932997309836,0.03990560100001242,1.2881765639976948,24.84131515379538,25.059138941415487,True," Explain transformer inference, attention, KV cache, prefill and decode performance.
+Answer:
+
+Certainly! Here's a concise explanation of the key concepts related to **transform"
+3,0,16,128,32,0.052435516998230014,0.0393115296129479,1.271092934999615,25.17518516457626,25.437829813435535,True," Explain transformer inference, attention, KV cache, prefill and decode performance.
+
+I know that I have to explain each part of the model in detail. The question"
+3,1,17,128,32,0.0524267009968753,0.0393115296129479,1.2710841189982602,25.175359774944837,25.437829813435535,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 3001. Explain transformer inference, attention, KV cache"
+3,2,18,128,32,0.05242489800002659,0.0393115296129479,1.2710823160014115,25.175395485530824,25.437829813435535,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 3002. Explain transformer inference, attention, KV cache"
+3,3,19,128,32,0.052423474997340236,0.0393115296129479,1.2710808929987252,25.175423669933252,25.437829813435535,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 3003. Explain transformer inference, attention, KV cache"
+4,0,20,128,32,0.05077280499972403,0.03947409945166944,1.2744698880014766,25.108478671222183,25.33306684359858,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 4000. Explain transformer inference, attention, KV cache"
+4,1,21,128,32,0.05076423900027294,0.03947409945166944,1.2744613220020256,25.10864743210241,25.33306684359858,True," Explain transformer inference, attention, KV cache, prefill and decode performance.
+Benchmark sample 4001. Explain transformer inference, attention, KV cache,"
+4,2,22,128,32,0.0507627759980096,0.03947409945166944,1.2744598589997622,25.108676255299752,25.33306684359858,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 4002. Explain transformer inference, attention, KV cache"
+4,3,23,128,32,0.05076127299980726,0.03947409945166944,1.2744583560015599,25.108705866542127,25.33306684359858,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 4003. Explain transformer inference, attention, KV cache"
+5,0,24,128,32,0.0513325440006156,0.040974419806345044,1.321539557997312,24.214182471006357,24.405470650377488,True," Explain transformer inference, attention, KV cache, prefill and decode performance.
+
+Okay, so I need to explain transformer inference, attention, KV cache, prefill"
+5,1,25,128,32,0.05130446200200822,0.040974419806345044,1.3215114759987046,24.214697020180374,24.405470650377488,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 5001. Explain transformer inference, attention, KV cache"
+5,2,26,128,32,0.051302498002769426,0.040974419806345044,1.3215095119994658,24.2147330075464,24.405470650377488,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 5002. Explain transformer inference, attention, KV cache"
+5,3,27,128,32,0.051301266001246404,0.040974419806345044,1.3215082799979427,24.214755582197196,24.405470650377488,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 5003. Explain transformer inference, attention, KV cache"
+6,0,28,128,32,0.05224670999814407,0.039922540645244635,1.2898454700007278,24.80917345857093,25.0485060278626,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 6000. Explain transformer inference, attention, KV cache"
+6,1,29,128,32,0.0522349779967044,0.039922540645244635,1.2898337379992881,24.809399116537655,25.0485060278626,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 6001. Explain transformer inference, attention, KV cache"
+6,2,30,128,32,0.05223202299748664,0.039922540645244635,1.2898307830000704,24.809455954811288,25.0485060278626,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 6002. Explain transformer inference, attention, KV cache"
+6,3,31,128,32,0.052229707998776576,0.039922540645244635,1.2898284680013603,24.809500483103193,25.0485060278626,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 6003. Explain transformer inference, attention, KV cache"
+7,0,32,128,32,0.05094840799938538,0.039811272967668745,1.2850978699971165,24.900827203201107,25.11851356303309,True," Explain transformer inference, attention, KV cache, prefill and decode performance.
+
+Benchmark sample 7000. Explain transformer inference, attention, KV cache,"
+7,1,33,128,32,0.050939311000547605,0.039811272967668745,1.2850887729982787,24.90100347335527,25.11851356303309,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 7001. Explain transformer inference, attention, KV cache"
+7,2,34,128,32,0.05093757800204912,0.039811272967668745,1.2850870399997802,24.901037053494424,25.11851356303309,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 7002. Explain transformer inference, attention, KV cache"
+7,3,35,128,32,0.05093613500139327,0.039811272967668745,1.2850855969991244,24.901065014443393,25.11851356303309,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 7003. Explain transformer inference, attention, KV cache"
+8,0,36,128,32,0.05595591599922045,0.0380604552258099,1.2358300279993273,25.89352845860565,26.273989474562853,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 8000. Explain transformer inference, attention, KV cache"
+8,1,37,128,32,0.05594507600108045,0.0380604552258099,1.2358191880011873,25.893755583902827,26.273989474562853,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 8001. Explain transformer inference, attention, KV cache"
+8,2,38,128,32,0.055942099999811035,0.0380604552258099,1.2358162119999179,25.89381793933136,26.273989474562853,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 8002. Explain transformer inference, attention, KV cache"
+8,3,39,128,32,0.055940106001798995,0.0380604552258099,1.2358142180019058,25.893859719253246,26.273989474562853,True," Explain transformer inference, attention, KV cache, prefill and decode performance.  Benchmark sample 8003. Explain transformer inference, attention, KV cache"

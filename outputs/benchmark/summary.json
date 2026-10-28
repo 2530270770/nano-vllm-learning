@@ -1,0 +1,195 @@
+{
+  "config": {
+    "model": "/home/chen17/huggingface/Qwen3-0.6B",
+    "num_requests": 4,
+    "prompt_tokens": 128,
+    "max_tokens": 32,
+    "max_num_seqs": 4,
+    "max_num_batched_tokens": 16384,
+    "warmup_runs": 1,
+    "repeats": 8,
+    "temperature": 0.6,
+    "output_dir": "outputs/benchmark"
+  },
+  "gpu": "NVIDIA GeForce RTX 3060 Laptop GPU",
+  "request_metrics": {
+    "ttft_s": {
+      "mean": 0.05200273387458765,
+      "p50": 0.05130077799913124,
+      "p95": 0.05594507600108045
+    },
+    "tpot_s": {
+      "mean": 0.0398029245564489,
+      "p50": 0.039811272967668745,
+      "p95": 0.040974419806345044
+    },
+    "e2e_s": {
+      "mean": 1.2858933951245035,
+      "p50": 1.2850978699971165,
+      "p95": 1.3215114759987046
+    },
+    "output_tokens_per_s": {
+      "mean": 24.895635814714545,
+      "p50": 24.84131515379538,
+      "p95": 25.89381793933136
+    },
+    "decode_tokens_per_s": {
+      "mean": 25.13606313682125,
+      "p50": 25.059138941415487,
+      "p95": 26.273989474562853
+    }
+  },
+  "batch_metrics": {
+    "aggregate_output_tokens_per_s": {
+      "mean": 99.58171966994875,
+      "p50": 99.36432943370768,
+      "p95": 103.5741138344226
+    },
+    "batch_wall_time_s": {
+      "mean": 1.2859041216238438,
+      "p50": 1.2850978699971165,
+      "p95": 1.321539557997312
+    }
+  },
+  "memory": {
+    "baseline_after_warmup": {
+      "allocated_gib": 3.8447399139404297,
+      "reserved_gib": 3.91796875,
+      "gpu_used_gib": 4.95263671875,
+      "gpu_free_gib": 1.046875,
+      "gpu_total_gib": 5.99951171875
+    },
+    "peak_torch_allocated_gib": 3.8584227561950684,
+    "peak_torch_reserved_gib": 3.91796875,
+    "incremental_peak_allocated_gib": 0.013682842254638672,
+    "after_benchmark": {
+      "allocated_gib": 3.8447399139404297,
+      "reserved_gib": 3.91796875,
+      "gpu_used_gib": 4.95263671875,
+      "gpu_free_gib": 1.046875,
+      "gpu_total_gib": 5.99951171875
+    }
+  },
+  "runs": [
+    {
+      "run_id": 1,
+      "num_requests": 4,
+      "total_output_tokens": 128,
+      "wall_time_s": 1.3211685879978177,
+      "aggregate_output_tokens_per_s": 96.8839262171524,
+      "step_loop_wall_s": 1.3211742989988124,
+      "memory": {
+        "allocated_gib": 3.8447399139404297,
+        "reserved_gib": 3.91796875,
+        "gpu_used_gib": 4.95263671875,
+        "gpu_free_gib": 1.046875,
+        "gpu_total_gib": 5.99951171875
+      }
+    },
+    {
+      "run_id": 2,
+      "num_requests": 4,
+      "total_output_tokens": 128,
+      "wall_time_s": 1.2881886359973578,
+      "aggregate_output_tokens_per_s": 99.36432943370768,
+      "step_loop_wall_s": 1.2881944879991352,
+      "memory": {
+        "allocated_gib": 3.8447399139404297,
+        "reserved_gib": 3.91796875,
+        "gpu_used_gib": 4.95263671875,
+        "gpu_free_gib": 1.046875,
+        "gpu_total_gib": 5.99951171875
+      }
+    },
+    {
+      "run_id": 3,
+      "num_requests": 4,
+      "total_output_tokens": 128,
+      "wall_time_s": 1.271092934999615,
+      "aggregate_output_tokens_per_s": 100.70074065830504,
+      "step_loop_wall_s": 1.271098635999806,
+      "memory": {
+        "allocated_gib": 3.8447399139404297,
+        "reserved_gib": 3.91796875,
+        "gpu_used_gib": 4.95263671875,
+        "gpu_free_gib": 1.046875,
+        "gpu_total_gib": 5.99951171875
+      }
+    },
+    {
+      "run_id": 4,
+      "num_requests": 4,
+      "total_output_tokens": 128,
+      "wall_time_s": 1.2744698880014766,
+      "aggregate_output_tokens_per_s": 100.43391468488873,
+      "step_loop_wall_s": 1.2744757190012024,
+      "memory": {
+        "allocated_gib": 3.8447399139404297,
+        "reserved_gib": 3.91796875,
+        "gpu_used_gib": 4.95263671875,
+        "gpu_free_gib": 1.046875,
+        "gpu_total_gib": 5.99951171875
+      }
+    },
+    {
+      "run_id": 5,
+      "num_requests": 4,
+      "total_output_tokens": 128,
+      "wall_time_s": 1.321539557997312,
+      "aggregate_output_tokens_per_s": 96.85672988402543,
+      "step_loop_wall_s": 1.3215450489988143,
+      "memory": {
+        "allocated_gib": 3.8447399139404297,
+        "reserved_gib": 3.91796875,
+        "gpu_used_gib": 4.95263671875,
+        "gpu_free_gib": 1.046875,
+        "gpu_total_gib": 5.99951171875
+      }
+    },
+    {
+      "run_id": 6,
+      "num_requests": 4,
+      "total_output_tokens": 128,
+      "wall_time_s": 1.2898454700007278,
+      "aggregate_output_tokens_per_s": 99.23669383428371,
+      "step_loop_wall_s": 1.2898510710001574,
+      "memory": {
+        "allocated_gib": 3.8447399139404297,
+        "reserved_gib": 3.91796875,
+        "gpu_used_gib": 4.95263671875,
+        "gpu_free_gib": 1.046875,
+        "gpu_total_gib": 5.99951171875
+      }
+    },
+    {
+      "run_id": 7,
+      "num_requests": 4,
+      "total_output_tokens": 128,
+      "wall_time_s": 1.2850978699971165,
+      "aggregate_output_tokens_per_s": 99.60330881280443,
+      "step_loop_wall_s": 1.2851039209999726,
+      "memory": {
+        "allocated_gib": 3.8447399139404297,
+        "reserved_gib": 3.91796875,
+        "gpu_used_gib": 4.95263671875,
+        "gpu_free_gib": 1.046875,
+        "gpu_total_gib": 5.99951171875
+      }
+    },
+    {
+      "run_id": 8,
+      "num_requests": 4,
+      "total_output_tokens": 128,
+      "wall_time_s": 1.2358300279993273,
+      "aggregate_output_tokens_per_s": 103.5741138344226,
+      "step_loop_wall_s": 1.2358358490018873,
+      "memory": {
+        "allocated_gib": 3.8447399139404297,
+        "reserved_gib": 3.91796875,
+        "gpu_used_gib": 4.95263671875,
+        "gpu_free_gib": 1.046875,
+        "gpu_total_gib": 5.99951171875
+      }
+    }
+  ]
+}
