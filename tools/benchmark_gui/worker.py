@@ -35,15 +35,31 @@ class BenchmarkWorker(QThread):
                 if not line:
                     break
                 self.log_line.emit(line.rstrip("\n"))
-                if self._stop_requested and self.process.poll() is None:
-                    self.process.terminate()
+
+            if self._stop_requested and self.process.poll() is None:
+                self._terminate_then_kill()
+
             code = self.process.wait()
             self.finished_with_code.emit(code)
         except Exception as exc:
             self.log_line.emit(f"[GUI 错误] {type(exc).__name__}: {exc}")
             self.finished_with_code.emit(-1)
 
+    def _terminate_then_kill(self):
+        """先礼貌 terminate，等待 3 秒，仍不退出再 kill。"""
+        if self.process is None or self.process.poll() is not None:
+            return
+        self.process.terminate()
+        try:
+            self.process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            self.log_line.emit("[GUI] 子进程未在 3 秒内退出，执行 kill。")
+            self.process.kill()
+            try:
+                self.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.log_line.emit("[GUI] kill 后仍未退出，请手动检查进程。")
+
     def stop(self):
         self._stop_requested = True
-        if self.process is not None and self.process.poll() is None:
-            self.process.terminate()
+        self._terminate_then_kill()

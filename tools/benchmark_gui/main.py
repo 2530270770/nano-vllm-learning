@@ -1,14 +1,15 @@
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
-    QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTabWidget, QVBoxLayout,
-    QWidget
+    QApplication, QFileDialog, QFrame, QGridLayout,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
+    QSplitter, QTabWidget, QVBoxLayout, QWidget,
 )
 
 # 支持 `python tools/benchmark_gui/main.py` 从仓库根目录启动
@@ -31,7 +32,6 @@ class MetricCard(QFrame):
         self.setObjectName("MetricCard")
         self.setMinimumWidth(150)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 11)
         layout.setSpacing(3)
@@ -43,6 +43,7 @@ class MetricCard(QFrame):
         self.value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         detail_label = QLabel(detail)
         detail_label.setObjectName("MetricDetail")
+
         layout.addWidget(title_label)
         layout.addWidget(self.value_label)
         layout.addWidget(detail_label)
@@ -91,6 +92,7 @@ class MainWindow(QMainWindow):
         self.resize(1380, 900)
         self.setMinimumSize(1080, 720)
         self.setWindowIcon(make_app_icon())
+
         self.worker = None
         self.output_dir = REPO_ROOT / "outputs" / "benchmark"
 
@@ -101,6 +103,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(20, 20, 20, 18)
         root.setSpacing(14)
 
+        # ---- Header ----
         header_card = QFrame()
         header_card.setObjectName("HeaderCard")
         header = QHBoxLayout(header_card)
@@ -124,11 +127,13 @@ class MainWindow(QMainWindow):
         header.addWidget(self.status_label)
         root.addWidget(header_card)
 
+        # ---- Splitter ----
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
         splitter.setHandleWidth(10)
         root.addWidget(splitter, 1)
 
+        # ---- Left panel ----
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -140,6 +145,7 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 4, 0)
         left_layout.setSpacing(12)
 
+        # 实验配置
         config_group = QGroupBox("实验配置")
         config_group.setObjectName("Card")
         form = QGridLayout(config_group)
@@ -148,8 +154,9 @@ class MainWindow(QMainWindow):
         form.setVerticalSpacing(9)
         form.setColumnStretch(1, 1)
 
-        self.model_edit = QLineEdit("/home/chen17/huggingface/Qwen3-0.6B")
-        self.model_edit.setPlaceholderText("模型目录或 Hugging Face 模型名")
+        # 不再硬编码作者机器上的模型路径
+        self.model_edit = QLineEdit("")
+        self.model_edit.setPlaceholderText("模型目录或 Hugging Face 模型名（必填）")
         form.addWidget(self.field_label("模型路径"), 0, 0, 1, 2)
         form.addWidget(self.model_edit, 1, 0, 1, 2)
 
@@ -160,6 +167,7 @@ class MainWindow(QMainWindow):
         self.max_batched_tokens = self.spin(16384, 1, 1048576)
         self.warmup_runs = self.spin(1, 0, 100)
         self.repeats = self.spin(5, 1, 100)
+
         form.addWidget(self.field_label("请求数量"), 2, 0)
         form.addWidget(self.field_label("Prompt Tokens"), 2, 1)
         form.addWidget(self.num_requests, 3, 0)
@@ -177,6 +185,7 @@ class MainWindow(QMainWindow):
         form.addWidget(self.field_label("重复轮数"), 8, 1)
         form.addWidget(self.warmup_runs, 9, 0)
         form.addWidget(self.repeats, 9, 1)
+
         form.addWidget(self.field_label("Temperature"), 10, 0, 1, 2)
         form.addWidget(self.temperature, 11, 0, 1, 2)
 
@@ -193,6 +202,7 @@ class MainWindow(QMainWindow):
 
         left_layout.addWidget(config_group)
 
+        # 运行控制
         action_group = QGroupBox("运行控制")
         action_group.setObjectName("Card")
         actions = QVBoxLayout(action_group)
@@ -201,18 +211,23 @@ class MainWindow(QMainWindow):
         buttons = QGridLayout()
         buttons.setHorizontalSpacing(8)
         buttons.setVerticalSpacing(8)
+
         self.start_button = QPushButton("开始 Benchmark")
         self.start_button.setProperty("role", "primary")
         self.start_button.setMinimumHeight(40)
         self.start_button.clicked.connect(self.start_benchmark)
+
         self.stop_button = QPushButton("停止")
         self.stop_button.setProperty("role", "danger")
         self.stop_button.clicked.connect(self.stop_benchmark)
         self.stop_button.setEnabled(False)
+
         self.load_button = QPushButton("刷新结果")
         self.load_button.clicked.connect(self.refresh_results)
+
         self.open_dir_button = QPushButton("打开结果目录")
         self.open_dir_button.clicked.connect(self.open_output_dir)
+
         buttons.addWidget(self.start_button, 0, 0, 1, 2)
         buttons.addWidget(self.stop_button, 1, 0)
         buttons.addWidget(self.load_button, 1, 1)
@@ -220,15 +235,18 @@ class MainWindow(QMainWindow):
         actions.addLayout(buttons)
         left_layout.addWidget(action_group)
 
+        # 结果详情
         self.metrics_label = QLabel("尚未加载结果")
         self.metrics_label.setObjectName("ResultText")
         self.metrics_label.setWordWrap(True)
         self.metrics_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
         summary_frame = QFrame()
         summary_frame.setObjectName("ResultSummary")
         summary_layout = QVBoxLayout(summary_frame)
         summary_layout.setContentsMargins(3, 3, 3, 3)
         summary_layout.addWidget(self.metrics_label)
+
         summary_group = QGroupBox("结果详情")
         summary_group.setObjectName("Card")
         summary_group_layout = QVBoxLayout(summary_group)
@@ -237,17 +255,19 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(summary_group)
         left_layout.addStretch()
 
+        # ---- Right panel ----
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(12)
 
-        metric_row = QHBoxLayout()  
+        metric_row = QHBoxLayout()
         metric_row.setSpacing(10)
         self.requests_card = MetricCard("请求记录", "已加载结果")
         self.batch_card = MetricCard("Batch 吞吐量", "mean · tokens/s")
         self.request_card = MetricCard("单请求吞吐量", "mean · tokens/s")
-        self.memory_card = MetricCard("显存占用", "峰值已用 / 总显存")
+        # 文案修正：reserved 不是 GPU used
+        self.memory_card = MetricCard("显存 Reserved", "峰值 Reserved / 总显存")
         for card in (
             self.requests_card,
             self.batch_card,
@@ -267,9 +287,7 @@ class MainWindow(QMainWindow):
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(5000)
-        self.log_view.setPlaceholderText(
-            "运行 Benchmark 后，子进程日志会实时显示在这里。"
-        )
+        self.log_view.setPlaceholderText("运行 Benchmark 后，子进程日志会实时显示在这里。")
         log_wrapper = QWidget()
         log_layout = QVBoxLayout(log_wrapper)
         log_layout.setContentsMargins(12, 12, 12, 12)
@@ -284,6 +302,7 @@ class MainWindow(QMainWindow):
 
         self.refresh_results()
 
+    # ---- helpers ----
     @staticmethod
     def field_label(text):
         label = QLabel(text)
@@ -309,39 +328,57 @@ class MainWindow(QMainWindow):
         if selected:
             self.output_edit.setText(selected)
 
+    # ---- command ----
     def command(self):
         script = REPO_ROOT / "benchmarks" / "benchmark.py"
         if not script.is_file():
             raise FileNotFoundError(f"没有找到 Benchmark 脚本：{script}")
 
+        model = self.model_edit.text().strip()
+        if not model:
+            raise ValueError("模型路径不能为空。")
+
         try:
             temperature = float(self.temperature.text())
         except ValueError:
             raise ValueError("Temperature 必须是数字，例如 0.6")
+        if temperature <= 0:
+            raise ValueError("Temperature 必须大于 0。")
+
+        prompt_tokens = self.prompt_tokens.value()
+        max_tokens = self.max_tokens.value()
+        # benchmark.py 的提示是 4096，这里做同样校验，提前拦截
+        if prompt_tokens + max_tokens > 4096:
+            raise ValueError("Prompt Tokens + 输出 Tokens 不能超过 4096。")
 
         output_dir = Path(self.output_edit.text()).expanduser()
-        # 现有 benchmark.py 使用固定的输出目录 outputs/benchmark。
-        # 先提示用户，避免用户以为自定义目录会自动生效。
-        if output_dir.resolve() != (REPO_ROOT / "outputs" / "benchmark").resolve():
-            QMessageBox.information(
-                self, "提示",
-                "当前 benchmark.py 将结果固定写入仓库的 outputs/benchmark。\n"
-                "此处选择的目录只用于 GUI 加载结果；如需自定义输出目录，需要给 benchmark.py 增加参数。"
-            )
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            probe = output_dir / ".gui_write_test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+        except OSError as exc:
+            raise ValueError(f"结果目录不可写：{output_dir}\n{exc}") from exc
+
+        # 每次都落到带时间戳的子目录，避免覆盖历史结果
+        run_dir = output_dir / f"run_{datetime.now():%Y%m%d_%H%M%S}"
+        run_dir.mkdir(parents=True, exist_ok=True)
 
         return [
             sys.executable, "-u", str(script),
-            "--model", self.model_edit.text().strip(),
+            "--model", model,
             "--num-requests", str(self.num_requests.value()),
-            "--prompt-tokens", str(self.prompt_tokens.value()),
-            "--max-tokens", str(self.max_tokens.value()),
+            "--prompt-tokens", str(prompt_tokens),
+            "--max-tokens", str(max_tokens),
             "--max-num-seqs", str(self.max_num_seqs.value()),
             "--max-num-batched-tokens", str(self.max_batched_tokens.value()),
             "--warmup-runs", str(self.warmup_runs.value()),
             "--repeats", str(self.repeats.value()),
             "--temperature", str(temperature),
+            "--output-dir", str(run_dir),
         ]
 
+    # ---- actions ----
     def start_benchmark(self):
         if self.worker is not None and self.worker.isRunning():
             return
@@ -380,10 +417,21 @@ class MainWindow(QMainWindow):
         self.log_view.appendPlainText(f"[GUI] Benchmark 子进程退出，code={code}")
         self.refresh_results()
 
+    # ---- results ----
     def refresh_results(self):
         output_dir = Path(self.output_edit.text()).expanduser()
-        rows, summary, csv_path, json_path = load_results(str(output_dir))
-        self.tabs_charts.show_rows(rows)
+        try:
+            rows, summary, csv_path, json_path = load_results(str(output_dir))
+        except Exception as exc:
+            # 损坏 JSON / 旧版本结果 / 读写失败都在这里兜底
+            self.requests_card.set_value("--")
+            self.batch_card.set_value("--")
+            self.request_card.set_value("--")
+            self.memory_card.set_value("--")
+            self.metrics_label.setText(f"加载结果失败：\n{exc}")
+            return
+
+        self.tabs_charts.show_results(rows, summary)
 
         if not rows and not summary:
             self.requests_card.set_value("0")
@@ -392,7 +440,7 @@ class MainWindow(QMainWindow):
             self.memory_card.set_value("--")
             self.metrics_label.setText(
                 "尚未发现可用的测试结果。\n\n"
-                f"CSV  {csv_path}\n"
+                f"CSV {csv_path}\n"
                 f"JSON {json_path}"
             )
             return
@@ -408,48 +456,62 @@ class MainWindow(QMainWindow):
         self.request_card.set_value(
             format_number(request.get("mean") if request else None, 2)
         )
-        used_gib = memory.get("peak_torch_reserved_gib")
-        total_gib = memory["baseline_after_warmup"].get("gpu_total_gib")
 
-        if used_gib is None:
+        # 安全读取显存字段：baseline_after_warmup 可能不存在
+        used_gib = None
+        total_gib = None
+        if isinstance(memory, dict):
+            used_gib = memory.get("peak_torch_reserved_gib")
+            baseline = memory.get("baseline_after_warmup")
+            if isinstance(baseline, dict):
+                total_gib = baseline.get("gpu_total_gib")
+
+        if used_gib is None and total_gib is None:
+            self.memory_card.set_value("--")
+        elif used_gib is None:
             self.memory_card.set_value(f"-- / {float(total_gib):.1f} GiB")
+        elif total_gib is None:
+            self.memory_card.set_value(f"{float(used_gib):.1f} / -- GiB")
         else:
-            self.memory_card.set_value(f"{float(used_gib):.1f} / {float(total_gib):.1f} GiB")
+            self.memory_card.set_value(
+                f"{float(used_gib):.1f} / {float(total_gib):.1f} GiB"
+            )
 
         lines = [
-            f"请求记录  {len(rows)}",
-            f"CSV       {csv_path}",
-            f"JSON      {json_path}",
+            f"请求记录 {len(rows)}",
+            f"CSV {csv_path}",
+            f"JSON {json_path}",
         ]
         if batch:
             lines.append(
-                "\nBatch 吞吐量  "
+                "\nBatch 吞吐量 "
                 f"mean={batch.get('mean', 'N/A')} | "
                 f"p50={batch.get('p50', 'N/A')} | "
                 f"p95={batch.get('p95', 'N/A')} tokens/s"
             )
         if request:
             lines.append(
-                "单请求吞吐量  "
+                "单请求吞吐量 "
                 f"mean={request.get('mean', 'N/A')} | "
                 f"p50={request.get('p50', 'N/A')} | "
                 f"p95={request.get('p95', 'N/A')} tokens/s"
             )
-        if memory:
-            lines.append(
-                "\n峰值 Torch allocated  "
-                f"{memory.get('peak_torch_allocated_gib', 'N/A')} GiB"
-            )
-            lines.append(
-                "峰值 Torch reserved   "
-                f"{memory.get('peak_torch_reserved_gib', 'N/A')} GiB"
-            )
+        if isinstance(memory, dict):
+            if memory.get("peak_torch_allocated_gib") is not None:
+                lines.append(
+                    "\n峰值 Torch allocated "
+                    f"{memory.get('peak_torch_allocated_gib')} GiB"
+                )
+            if memory.get("peak_torch_reserved_gib") is not None:
+                lines.append(
+                    "峰值 Torch reserved "
+                    f"{memory.get('peak_torch_reserved_gib')} GiB"
+                )
         self.metrics_label.setText("\n".join(lines))
 
     def open_output_dir(self):
         path = Path(self.output_edit.text()).expanduser()
         path.mkdir(parents=True, exist_ok=True)
-        # Linux/WSL 环境使用 xdg-open；Windows 环境使用 os.startfile。
         try:
             if sys.platform.startswith("win"):
                 os.startfile(str(path))
@@ -459,11 +521,18 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "打开失败", str(exc))
 
+    # ---- lifecycle ----
+    def closeEvent(self, event):
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.stop()
+            # 给子进程一点时间收尾；worker.stop() 内部已做 terminate→wait→kill
+            self.worker.wait(3000)
+        event.accept()
+
 
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("nano-vLLM Benchmark Console")
-    app.setStyle("Fusion")
     apply_theme(app)
     window = MainWindow()
     window.show()
