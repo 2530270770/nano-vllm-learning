@@ -95,6 +95,8 @@ class MainWindow(QMainWindow):
 
         self.worker = None
         self.output_dir = REPO_ROOT / "outputs" / "benchmark"
+        self.current_run_dir = None       # 本次运行生成的 run_* 目录
+        self.current_results_dir = None   # 当前界面上展示的结果目录
 
         central = QWidget()
         central.setObjectName("AppRoot")
@@ -154,7 +156,6 @@ class MainWindow(QMainWindow):
         form.setVerticalSpacing(9)
         form.setColumnStretch(1, 1)
 
-        # 不再硬编码作者机器上的模型路径
         self.model_edit = QLineEdit("")
         self.model_edit.setPlaceholderText("模型目录或 Hugging Face 模型名（必填）")
         form.addWidget(self.field_label("模型路径"), 0, 0, 1, 2)
@@ -190,7 +191,7 @@ class MainWindow(QMainWindow):
         form.addWidget(self.temperature, 11, 0, 1, 2)
 
         self.output_edit = QLineEdit(str(self.output_dir))
-        self.output_edit.setPlaceholderText("Benchmark 结果目录")
+        self.output_edit.setPlaceholderText("Benchmark 结果父目录")
         output_row = QHBoxLayout()
         output_row.setSpacing(7)
         output_row.addWidget(self.output_edit, 1)
@@ -222,10 +223,10 @@ class MainWindow(QMainWindow):
         self.stop_button.clicked.connect(self.stop_benchmark)
         self.stop_button.setEnabled(False)
 
-        self.load_button = QPushButton("刷新结果")
-        self.load_button.clicked.connect(self.refresh_results)
+        self.load_button = QPushButton("刷新最新结果")
+        self.load_button.clicked.connect(self.on_refresh_clicked)
 
-        self.open_dir_button = QPushButton("打开结果目录")
+        self.open_dir_button = QPushButton("打开当前结果目录")
         self.open_dir_button.clicked.connect(self.open_output_dir)
 
         buttons.addWidget(self.start_button, 0, 0, 1, 2)
@@ -266,7 +267,6 @@ class MainWindow(QMainWindow):
         self.requests_card = MetricCard("请求记录", "已加载结果")
         self.batch_card = MetricCard("Batch 吞吐量", "mean · tokens/s")
         self.request_card = MetricCard("单请求吞吐量", "mean · tokens/s")
-        # 文案修正：reserved 不是 GPU used
         self.memory_card = MetricCard("显存 Reserved", "峰值 Reserved / 总显存")
         for card in (
             self.requests_card,
@@ -317,6 +317,43 @@ class MainWindow(QMainWindow):
         widget.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         return widget
 
+    @staticmethod
+    def _has_results(path):
+        return path.is_dir() and (
+            (path / "request_metrics.csv").is_file()
+            or (path / "summary.json").is_file()
+        )
+
+    def resolve_results_dir(self, preferred=None):
+        """
+        决定本次要展示的结果目录：
+        1) 显式传入的目录（本次 run_dir）；
+        2) 父目录自身有 CSV/JSON；
+        3) 父目录下最新的 run_* 子目录；
+        4) 兜底返回父目录。
+        """
+        if preferred:
+            p = Path(preferred).expanduser()
+            if p.is_dir():
+                return p
+
+        base = Path(self.output_edit.text()).expanduser()
+        if self._has_results(base):
+            return base
+
+        if base.is_dir():
+            run_dirs = sorted(
+                [
+                    d for d in base.iterdir()
+                    if d.is_dir() and d.name.startswith("run_")
+                ],
+                key=lambda d: d.name,
+                reverse=True,
+            )
+            if run_dirs:
+                return run_dirs[0]
+        return base
+
     def set_status(self, text, state="idle"):
         self.status_label.setText(text)
         set_widget_state(self.status_label, state)
@@ -347,7 +384,6 @@ class MainWindow(QMainWindow):
 
         prompt_tokens = self.prompt_tokens.value()
         max_tokens = self.max_tokens.value()
-        # benchmark.py 的提示是 4096，这里做同样校验，提前拦截
         if prompt_tokens + max_tokens > 4096:
             raise ValueError("Prompt Tokens + 输出 Tokens 不能超过 4096。")
 
@@ -364,7 +400,7 @@ class MainWindow(QMainWindow):
         run_dir = output_dir / f"run_{datetime.now():%Y%m%d_%H%M%S}"
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        return [
+        command = [
             sys.executable, "-u", str(script),
             "--model", model,
             "--num-requests", str(self.num_requests.value()),
@@ -377,19 +413,22 @@ class MainWindow(QMainWindow):
             "--temperature", str(temperature),
             "--output-dir", str(run_dir),
         ]
+        return command, run_dir
 
     # ---- actions ----
     def start_benchmark(self):
         if self.worker is not None and self.worker.isRunning():
             return
         try:
-            command = self.command()
+            command, run_dir = self.command()
         except Exception as exc:
             QMessageBox.critical(self, "无法启动", str(exc))
             return
 
+        self.current_run_dir = run_dir
         self.log_view.appendPlainText("\n" + "=" * 70)
         self.log_view.appendPlainText("开始新的 Benchmark")
+        self.log_view.appendPlainText(f"[GUI] 本次结果目录：{run_dir}")
         self.set_status("● 运行中", "running")
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
@@ -415,20 +454,29 @@ class MainWindow(QMainWindow):
             "success" if code == 0 else "error",
         )
         self.log_view.appendPlainText(f"[GUI] Benchmark 子进程退出，code={code}")
-        self.refresh_results()
+        # 关键修复：刷新本次运行目录，而不是父目录
+        self.refresh_results(self.current_run_dir)
+
+    def on_refresh_clicked(self):
+        # 手动刷新：优先本次运行目录，其次父目录下最新的 run_*
+        self.refresh_results(self.current_run_dir)
 
     # ---- results ----
-    def refresh_results(self):
-        output_dir = Path(self.output_edit.text()).expanduser()
+    def refresh_results(self, target_dir=None):
+        results_dir = self.resolve_results_dir(target_dir)
+        self.current_results_dir = results_dir
+
         try:
-            rows, summary, csv_path, json_path = load_results(str(output_dir))
+            rows, summary, csv_path, json_path = load_results(str(results_dir))
         except Exception as exc:
             # 损坏 JSON / 旧版本结果 / 读写失败都在这里兜底
             self.requests_card.set_value("--")
             self.batch_card.set_value("--")
             self.request_card.set_value("--")
             self.memory_card.set_value("--")
-            self.metrics_label.setText(f"加载结果失败：\n{exc}")
+            self.metrics_label.setText(
+                f"加载结果失败：\n{exc}\n\n结果目录：{results_dir}"
+            )
             return
 
         self.tabs_charts.show_results(rows, summary)
@@ -440,6 +488,7 @@ class MainWindow(QMainWindow):
             self.memory_card.set_value("--")
             self.metrics_label.setText(
                 "尚未发现可用的测试结果。\n\n"
+                f"结果目录 {results_dir}\n"
                 f"CSV {csv_path}\n"
                 f"JSON {json_path}"
             )
@@ -457,7 +506,6 @@ class MainWindow(QMainWindow):
             format_number(request.get("mean") if request else None, 2)
         )
 
-        # 安全读取显存字段：baseline_after_warmup 可能不存在
         used_gib = None
         total_gib = None
         if isinstance(memory, dict):
@@ -478,6 +526,7 @@ class MainWindow(QMainWindow):
             )
 
         lines = [
+            f"结果目录 {results_dir}",
             f"请求记录 {len(rows)}",
             f"CSV {csv_path}",
             f"JSON {json_path}",
@@ -510,7 +559,7 @@ class MainWindow(QMainWindow):
         self.metrics_label.setText("\n".join(lines))
 
     def open_output_dir(self):
-        path = Path(self.output_edit.text()).expanduser()
+        path = self.current_results_dir or Path(self.output_edit.text()).expanduser()
         path.mkdir(parents=True, exist_ok=True)
         try:
             if sys.platform.startswith("win"):
@@ -525,7 +574,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self.worker is not None and self.worker.isRunning():
             self.worker.stop()
-            # 给子进程一点时间收尾；worker.stop() 内部已做 terminate→wait→kill
             self.worker.wait(3000)
         event.accept()
 
