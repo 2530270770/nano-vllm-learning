@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 from nanovllm.layers.triton_kernels import silu_and_mul_triton
 
-
+@torch.compile
 def pytorch_silu_and_mul(x):
     gate, up = x.chunk(2, dim=-1)
     return F.silu(gate) * up
