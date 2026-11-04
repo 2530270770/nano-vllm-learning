@@ -1,0 +1,28 @@
+============================================================
+nano-vLLM End-to-End Benchmark
+============================================================
+GPU: NVIDIA GeForce RTX 3060 Laptop GPU
+Model: /home/chen17/huggingface/Qwen3-0.6B
+SwiGLU: PyTorch
+Requests: 4
+Prompt tokens: 128
+Output tokens: 32
+
+========== Warmup ==========
+
+========== Benchmark ==========
+Run 1/5 | TTFT=52.853 ms | TPOT=39.610 ms | Throughput=99.94 tok/s | Completion=1280.757 ms
+Run 2/5 | TTFT=59.820 ms | TPOT=40.271 ms | Throughput=97.84 tok/s | Completion=1308.213 ms
+Run 3/5 | TTFT=49.357 ms | TPOT=38.000 ms | Throughput=104.28 tok/s | Completion=1227.372 ms
+Run 4/5 | TTFT=56.268 ms | TPOT=39.783 ms | Throughput=99.26 tok/s | Completion=1289.538 ms
+Run 5/5 | TTFT=49.942 ms | TPOT=39.576 ms | Throughput=100.25 tok/s | Completion=1276.808 ms
+
+========== Average Results ==========
+TTFT                  : 53.648
+TPOT                  : 39.448
+Output Tokens/s       : 100.314
+Request Completion    : 1276.537
+Batch Wall Time       : 1276.575
+
+Peak VRAM Allocated : 3.667 GiB
+Peak VRAM Reserved  : 3.977 GiB

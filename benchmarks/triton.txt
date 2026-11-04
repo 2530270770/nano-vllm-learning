@@ -1,0 +1,28 @@
+============================================================
+nano-vLLM End-to-End Benchmark
+============================================================
+GPU: NVIDIA GeForce RTX 3060 Laptop GPU
+Model: /home/chen17/huggingface/Qwen3-0.6B
+SwiGLU: Triton
+Requests: 4
+Prompt tokens: 128
+Output tokens: 32
+
+========== Warmup ==========
+
+========== Benchmark ==========
+Run 1/5 | TTFT=50.996 ms | TPOT=42.761 ms | Throughput=92.98 tok/s | Completion=1376.588 ms
+Run 2/5 | TTFT=54.024 ms | TPOT=47.071 ms | Throughput=84.59 tok/s | Completion=1513.214 ms
+Run 3/5 | TTFT=64.894 ms | TPOT=40.819 ms | Throughput=96.22 tok/s | Completion=1330.284 ms
+Run 4/5 | TTFT=49.745 ms | TPOT=40.489 ms | Throughput=98.09 tok/s | Completion=1304.918 ms
+Run 5/5 | TTFT=50.112 ms | TPOT=43.500 ms | Throughput=91.52 tok/s | Completion=1398.624 ms
+
+========== Average Results ==========
+TTFT                  : 53.954
+TPOT                  : 42.928
+Output Tokens/s       : 92.677
+Request Completion    : 1384.726
+Batch Wall Time       : 1384.773
+
+Peak VRAM Allocated : 3.858 GiB
+Peak VRAM Reserved  : 3.918 GiB
