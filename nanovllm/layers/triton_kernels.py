@@ -32,7 +32,9 @@ def _silu_and_mul_kernel(
     ).to(tl.float32)
 
     # SiLU(gate) * up
-    silu = gate / (1.0 + tl.exp(-gate))
+    # silu = gate / (1.0 + tl.exp(-gate))
+    # output = silu * up
+    silu = gate * tl.sigmoid(gate)
     output = silu * up
 
     tl.store(Y + offsets, output, mask=mask)
@@ -62,7 +64,12 @@ def silu_and_mul_triton(x: torch.Tensor) -> torch.Tensor:
         dtype=x.dtype,
     )
 
-    block_size = 1024
+    # block_size = 1024
+    if m >= 128:
+        block_size = 256
+    else:
+        block_size = 512
+
     grid = (triton.cdiv(m * n, block_size),)
 
     _silu_and_mul_kernel[grid](
@@ -71,6 +78,7 @@ def silu_and_mul_triton(x: torch.Tensor) -> torch.Tensor:
         m,
         n,
         block_size,
+        num_warps=4,
     )
 
     return output
