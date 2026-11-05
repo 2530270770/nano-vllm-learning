@@ -1,3 +1,13 @@
+"""
+SwiGLU Triton Optimization
+├── Correctness: PASS
+├── PyTorch Eager Baseline
+├── PyTorch Compile Baseline
+├── BLOCK_SIZE Sweep
+├── num_warps Sweep
+├── Stability Benchmark: 30 rounds
+└── Candidate Config: BLOCK_SIZE=512, num_warps=8
+"""
 
 import torch
 import triton
@@ -65,10 +75,9 @@ def silu_and_mul_triton(x: torch.Tensor) -> torch.Tensor:
     )
 
     # block_size = 1024
-    if m >= 128:
-        block_size = 256
-    else:
-        block_size = 512
+    block_size = 512
+    num_warps = 8
+
 
     grid = (triton.cdiv(m * n, block_size),)
 
@@ -78,7 +87,7 @@ def silu_and_mul_triton(x: torch.Tensor) -> torch.Tensor:
         m,
         n,
         block_size,
-        num_warps=4,
+        num_warps=num_warps,
     )
 
     return output
