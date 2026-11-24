@@ -41,7 +41,22 @@ def test_mixed_batch_decode_and_chunked_prefill():
     Sequence.block_size = config.kvcache_block_size
 
     # 2. 初始化真实 ModelRunner 和 Scheduler
+    free_before, total = torch.cuda.mem_get_info()
+
+    print("\n========== GPU Memory Debug ==========")
+    print(f"GPU total: {total / 1024**3:.2f} GiB")
+    print(f"GPU free before ModelRunner: {free_before / 1024**3:.2f} GiB")
+    print(f"GPU allocated before: {torch.cuda.memory_allocated() / 1024**3:.2f} GiB")
+    print(f"GPU reserved before: {torch.cuda.memory_reserved() / 1024**3:.2f} GiB")
+
     runner = ModelRunner(config, rank=0, event=[])
+
+    free_after, _ = torch.cuda.mem_get_info()
+    print(f"GPU free after ModelRunner: {free_after / 1024**3:.2f} GiB")
+    print(f"GPU allocated after: {torch.cuda.memory_allocated() / 1024**3:.2f} GiB")
+    print(f"GPU reserved after: {torch.cuda.memory_reserved() / 1024**3:.2f} GiB")
+    print(f"KV Cache blocks: {config.num_kvcache_blocks}")
+    print("======================================\n")
 
     try:
         engine = LLMEngine.__new__(LLMEngine)
@@ -101,6 +116,21 @@ def test_mixed_batch_decode_and_chunked_prefill():
         engine.scheduler.add(prefill_seq_2)
 
         execution_order.clear()
+
+        bm = engine.scheduler.block_manager
+
+        print("\n========== KV Cache Debug ==========")
+        print("Total KV blocks:", len(bm.blocks))
+        print("Free KV blocks:", len(bm.free_block_ids))
+        print("Used KV blocks:", len(bm.used_block_ids))
+
+        print("Decode seq blocks:", decode_seq.num_blocks)
+        print("Prefill seq 1 blocks:", prefill_seq_1.num_blocks)
+        print("Prefill seq 2 blocks:", prefill_seq_2.num_blocks)
+
+        print("Prefill seq 1 can allocate:", bm.can_allocate(prefill_seq_1))
+        print("Prefill seq 2 can allocate:", bm.can_allocate(prefill_seq_2))
+        print("===================================\n")
 
         # 5. 第二次 Engine Step：Decode + Chunked Prefill
         outputs, decode_tokens, prefill_tokens = engine.step()

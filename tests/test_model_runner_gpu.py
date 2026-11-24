@@ -1,6 +1,6 @@
 
 import os
-
+import gc
 import pytest
 import torch
 
@@ -136,3 +136,7 @@ def test_model_runner_prefill_then_decode():
 
     finally:
         runner.exit()
+        del runner
+        gc.collect()
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
