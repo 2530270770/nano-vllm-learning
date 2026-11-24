@@ -47,12 +47,54 @@ class LLMEngine:
         self.scheduler.add(seq)
 
     def step(self):
-        seqs, is_prefill = self.scheduler.schedule()
-        num_tokens = sum(seq.num_scheduled_tokens for seq in seqs) if is_prefill else -len(seqs)
-        token_ids = self.model_runner.call("run", seqs, is_prefill)
-        self.scheduler.postprocess(seqs, token_ids, is_prefill)
-        outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]
-        return outputs, num_tokens
+        # 1. 获取本轮调度结果
+        schedule_output = self.scheduler.schedule()
+
+        # 2. 先执行 Decode
+        if schedule_output.decode_seqs:
+            decode_token_ids = self.model_runner.call(
+                "run_decode",
+                schedule_output.decode_seqs,
+            )
+
+            self.scheduler.postprocess(
+                schedule_output.decode_seqs,
+                decode_token_ids,
+                is_prefill=False,
+            )
+
+        # 3. 再执行 Prefill
+        if schedule_output.prefill_seqs:
+            prefill_token_ids = self.model_runner.call(
+                "run_prefill",
+                schedule_output.prefill_seqs,
+            )
+
+            self.scheduler.postprocess(
+                schedule_output.prefill_seqs,
+                prefill_token_ids,
+                is_prefill=True,
+            )
+
+        # 4. 汇总本轮参与计算的请求
+        scheduled_seqs = (
+            schedule_output.decode_seqs
+            + schedule_output.prefill_seqs
+        )
+
+        # 5. 收集本轮已经完成的请求
+        outputs = [
+            (seq.seq_id, seq.completion_token_ids)
+            for seq in scheduled_seqs
+            if seq.is_finished
+        ]
+
+        # 分别返回 Decode 和 Prefill 的 Token 数量
+        return (
+            outputs,
+            schedule_output.decode_tokens,
+            schedule_output.prefill_tokens,
+        )
 
     def is_finished(self):
         return self.scheduler.is_finished()
@@ -72,18 +114,27 @@ class LLMEngine:
         prefill_throughput = decode_throughput = 0.
         while not self.is_finished():
             t = perf_counter()
-            output, num_tokens = self.step()
-            if num_tokens > 0:
-                prefill_throughput = num_tokens / (perf_counter() - t)
-            else:
-                decode_throughput = -num_tokens / (perf_counter() - t)
+
+            output, decode_tokens, prefill_tokens = self.step()
+
+            elapsed = perf_counter() - t
+
+            # 分别统计两种计算的吞吐量
+            if prefill_tokens > 0:
+                prefill_throughput = prefill_tokens / elapsed
+
+            if decode_tokens > 0:
+                decode_throughput = decode_tokens / elapsed
+
             pbar.set_postfix({
                 "Prefill": f"{int(prefill_throughput)}tok/s",
                 "Decode": f"{int(decode_throughput)}tok/s",
             })
+
             for seq_id, token_ids in output:
                 outputs[seq_id] = token_ids
                 pbar.update(1)
+
         pbar.close()
         outputs = [outputs[seq_id] for seq_id in sorted(outputs.keys())]
         outputs = [{"text": self.tokenizer.decode(token_ids), "token_ids": token_ids} for token_ids in outputs]
