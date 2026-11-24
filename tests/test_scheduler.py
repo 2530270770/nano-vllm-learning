@@ -369,3 +369,104 @@ def test_decode_preemption_keeps_block_accounting_consistent():
 
 
 
+def test_prefill_takes_decode_slot_after_decode_finishes():
+    """Decode 请求结束后，已完成 Prefill 的请求应该接管 Decode 名额。"""
+    scheduler = make_scheduler(
+        max_num_seqs=2,
+        max_num_decode_seqs=1,
+        max_num_batched_tokens=4,
+    )
+
+    # 已经完成 Prefill 的 Decode 请求，只允许再生成一个 Token。
+    decode_seq = make_seq(10, max_tokens=1)
+    add_running_seq(scheduler, decode_seq)
+
+    # 新到达的 Prefill 请求。
+    prefill_seq = make_seq(2, max_tokens=4)
+    scheduler.add(prefill_seq)
+
+    # Step 1：Decode 占用唯一 Decode 名额，
+    # Prefill 利用剩余预算完成计算。
+    output1 = scheduler.schedule()
+
+    assert output1.decode_seqs == [decode_seq]
+    assert output1.prefill_seqs == [prefill_seq]
+    assert output1.decode_tokens == 1
+    assert output1.prefill_tokens == 2
+
+    # 分别执行两个阶段的 Postprocess。
+    scheduler.postprocess(
+        output1.decode_seqs,
+        [999],
+        is_prefill=False,
+    )
+    scheduler.postprocess(
+        output1.prefill_seqs,
+        [888],
+        is_prefill=True,
+    )
+
+    # 原 Decode 请求已经结束。
+    assert decode_seq.status == SequenceStatus.FINISHED
+
+    # Prefill 请求已经完成 Prefill，进入 Running。
+    assert prefill_seq.status == SequenceStatus.RUNNING
+    assert prefill_seq.num_completion_tokens == 1
+
+    # Step 2：原 Decode 请求退出后，
+    # Prefill 请求应该接管唯一的 Decode 名额。
+    output2 = scheduler.schedule()
+
+    assert output2.decode_seqs == [prefill_seq]
+    assert output2.prefill_seqs == []
+    assert output2.decode_tokens == 1
+    assert output2.prefill_tokens == 0
+
+
+def test_prefill_respects_remaining_slots_and_keeps_waiting_requests():
+    """Prefill 名额不足时，只调度允许数量，其余请求不能丢失。"""
+    scheduler = make_scheduler(
+        max_num_seqs=2,
+        max_num_decode_seqs=1,
+        max_num_batched_tokens=10,
+        num_kvcache_blocks=8,
+    )
+
+    # 一个 Decode 请求占用一个请求名额和一个 Token Budget。
+    decode_seq = make_seq(20)
+    add_running_seq(scheduler, decode_seq)
+
+    # 还有三个等待 Prefill 的请求。
+    prefill_seqs = [
+        make_seq(20),
+        make_seq(20),
+        make_seq(20),
+    ]
+
+    for seq in prefill_seqs:
+        scheduler.add(seq)
+
+    output = scheduler.schedule()
+
+    # Decode 占了一个名额，Prefill 只能使用剩余的一个名额。
+    assert output.decode_seqs == [decode_seq]
+    assert len(output.prefill_seqs) == 1
+    assert output.prefill_seqs == [prefill_seqs[0]]
+
+    # Decode 使用 1 个 Token，Prefill 使用剩余的 9 个。
+    assert output.decode_tokens == 1
+    assert output.prefill_tokens == 9
+    assert prefill_seqs[0].num_scheduled_tokens == 9
+
+    # 第一个 Prefill 被切成 Chunk，回到 Waiting 队尾。
+    # 另外两个请求仍在 Waiting 中，且没有丢失。
+    assert list(scheduler.waiting) == [
+        prefill_seqs[1],
+        prefill_seqs[2],
+        prefill_seqs[0],
+    ]
+
+    assert all(
+        seq.status == SequenceStatus.WAITING
+        for seq in prefill_seqs
+    )
