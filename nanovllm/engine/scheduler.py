@@ -1,9 +1,15 @@
 from collections import deque
-
+from dataclasses import dataclass
 from nanovllm.config import Config
 from nanovllm.engine.sequence import Sequence, SequenceStatus
 from nanovllm.engine.block_manager import BlockManager
 
+@dataclass
+class ScheduleOutput:
+    decode_seqs: list[Sequence]
+    prefill_seqs: list[Sequence]
+    decode_tokens: int # = len(decode_seqs)
+    prefill_tokens: int
 
 class Scheduler:
 
