@@ -8,7 +8,6 @@ class Config:
     model: str
     max_num_batched_tokens: int = 16384
     max_num_seqs: int = 512
-    max_num_decode_seqs: int = 8  # Decode Batch 独立上限
     max_model_len: int = 4096
     gpu_memory_utilization: float = 0.9
     tensor_parallel_size: int = 1
@@ -17,6 +16,7 @@ class Config:
     eos: int = -1
     kvcache_block_size: int = 256
     num_kvcache_blocks: int = -1
+    max_num_decode_seqs: int = 8  # Decode Batch 独立上限
 
     def __post_init__(self):
         assert os.path.isdir(self.model)
