@@ -10,24 +10,24 @@
     "max_num_batched_tokens": 16384,
     "max_model_len": 1024,
     "gpu_memory_utilization": 0.85,
-    "enforce_eager": true,
+    "enforce_eager": false,
     "temperature": 1.0,
     "seed": 42
   },
   "summary": {
-    "total_time_ms": 704.0469309999935,
+    "total_time_ms": 423.3805719995871,
     "total_output_tokens": 32,
-    "output_throughput": 45.45151550415649,
-    "mean_ttft_ms": 349.6764379998467,
-    "mean_tpot_ms": 50.6200901428591,
-    "mean_request_latency_ms": 704.0170689998604,
+    "output_throughput": 75.58211716911565,
+    "mean_ttft_ms": 349.50573975038424,
+    "mean_tpot_ms": 10.548992856846391,
+    "mean_request_latency_ms": 423.34868974830897,
     "total_steps": 8,
     "total_prefill_tokens": 512,
     "total_decode_tokens": 28,
-    "initial_allocated_mib": 3965.013671875,
-    "initial_reserved_mib": 4034.0,
-    "peak_allocated_mib": 3979.02490234375,
-    "peak_reserved_mib": 4040.0,
+    "initial_allocated_mib": 3973.14990234375,
+    "initial_reserved_mib": 4058.0,
+    "peak_allocated_mib": 3987.1611328125,
+    "peak_reserved_mib": 4064.0,
     "peak_allocated_delta_mib": 14.01123046875,
     "peak_reserved_delta_mib": 6.0
   },
@@ -36,85 +36,85 @@
       "request_id": 0,
       "prompt_tokens": 128,
       "output_tokens": 8,
-      "arrival_time_ms": 0.002305000180058414,
-      "ttft_ms": 349.68886599972393,
-      "tpot_ms": 50.6200901428591,
-      "request_latency_ms": 704.0294969997376
+      "arrival_time_ms": 0.0020939987734891474,
+      "ttft_ms": 349.51946799992584,
+      "tpot_ms": 10.548992856846391,
+      "request_latency_ms": 423.36241799785057
     },
     {
       "request_id": 1,
       "prompt_tokens": 128,
       "output_tokens": 8,
-      "arrival_time_ms": 0.015358999917225447,
-      "ttft_ms": 349.67581199998676,
-      "tpot_ms": 50.6200901428591,
-      "request_latency_ms": 704.0164430000004
+      "arrival_time_ms": 0.016941998183028772,
+      "ttft_ms": 349.5046200005163,
+      "tpot_ms": 10.548992856846391,
+      "request_latency_ms": 423.34756999844103
     },
     {
       "request_id": 2,
       "prompt_tokens": 128,
       "output_tokens": 8,
-      "arrival_time_ms": 0.01856500011854223,
-      "ttft_ms": 349.67260599978545,
-      "tpot_ms": 50.6200901428591,
-      "request_latency_ms": 704.0132369997991
+      "arrival_time_ms": 0.02004799898713827,
+      "ttft_ms": 349.5015139997122,
+      "tpot_ms": 10.548992856846391,
+      "request_latency_ms": 423.3444639976369
     },
     {
       "request_id": 3,
       "prompt_tokens": 128,
       "output_tokens": 8,
-      "arrival_time_ms": 0.02270300001327996,
-      "ttft_ms": 349.6684679998907,
-      "tpot_ms": 50.6200901428591,
-      "request_latency_ms": 704.0090989999044
+      "arrival_time_ms": 0.024204997316701338,
+      "ttft_ms": 349.4973570013826,
+      "tpot_ms": 10.548992856846391,
+      "request_latency_ms": 423.34030699930736
     }
   ],
   "steps": [
     {
       "step": 0,
-      "step_time_ms": 349.6594009998262,
+      "step_time_ms": 349.48569500193116,
       "decode_tokens": 0,
       "prefill_tokens": 512
     },
     {
       "step": 1,
-      "step_time_ms": 50.71012799999153,
+      "step_time_ms": 10.671101001207717,
       "decode_tokens": 4,
       "prefill_tokens": 0
     },
     {
       "step": 2,
-      "step_time_ms": 50.36492099998213,
+      "step_time_ms": 10.445142001117347,
       "decode_tokens": 4,
       "prefill_tokens": 0
     },
     {
       "step": 3,
-      "step_time_ms": 50.44847699991806,
+      "step_time_ms": 10.515770998608787,
       "decode_tokens": 4,
       "prefill_tokens": 0
     },
     {
       "step": 4,
-      "step_time_ms": 49.703876999956265,
+      "step_time_ms": 10.509743002330652,
       "decode_tokens": 4,
       "prefill_tokens": 0
     },
     {
       "step": 5,
-      "step_time_ms": 55.07113500016203,
+      "step_time_ms": 10.46632300131023,
       "decode_tokens": 4,
       "prefill_tokens": 0
     },
     {
       "step": 6,
-      "step_time_ms": 49.66813999999431,
+      "step_time_ms": 10.533967997616855,
       "decode_tokens": 4,
       "prefill_tokens": 0
     },
     {
       "step": 7,
-      "step_time_ms": 48.20140199990419,
+      "step_time_ms": 10.589432997221593,
       "decode_tokens": 4,
       "prefill_tokens": 0
     }
