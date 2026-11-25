@@ -20,7 +20,7 @@ def parse_args():
     )
     parser.add_argument(
         "--scenario",
-        choices=["all_at_once", "staggered"],
+        choices=["all_at_once", "staggered", "stress"],
         required=True,
     )
     parser.add_argument(
@@ -121,13 +121,15 @@ def main():
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is not available")
 
-    if args.num_requests != 4:
-        raise ValueError("第一版 Benchmark 暂时固定测试 4 个请求")
-
     if args.scenario == "all_at_once":
         prompt_len = 128
         max_num_batched_tokens = 16384
-    else:
+
+    elif args.scenario == "staggered":
+        prompt_len = 512
+        max_num_batched_tokens = 512
+
+    elif args.scenario == "stress":
         prompt_len = 512
         max_num_batched_tokens = 512
 
@@ -197,7 +199,8 @@ def main():
     torch.cuda.synchronize()
     benchmark_start = time.perf_counter()
 
-    if args.scenario == "all_at_once":
+    if args.scenario in ("all_at_once", "stress"):
+        # all_at_once 和 stress：一次性提交所有请求
         add_requests(
             engine,
             sequences,
@@ -208,7 +211,7 @@ def main():
             benchmark_start,
         )
     else:
-        # 先提交第一个请求
+        # staggered：先提交第一个请求
         add_requests(
             engine,
             sequences,
