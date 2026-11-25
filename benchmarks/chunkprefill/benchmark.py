@@ -118,6 +118,8 @@ def warmup(engine, tokenizer):
 def main():
     args = parse_args()
 
+    enforce_eager = (args.variant == "baseline")
+
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is not available")
 
@@ -143,7 +145,7 @@ def main():
     print("Prompt tokens:", prompt_len)
     print("Output tokens:", args.output_tokens)
     print("Max batched tokens:", max_num_batched_tokens)
-    print("Eager mode: True")
+    print("Eager mode:", enforce_eager)
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.model,
@@ -163,7 +165,7 @@ def main():
         max_model_len=1024,
         gpu_memory_utilization=0.85,
         tensor_parallel_size=1,
-        enforce_eager=(args.variant == "baseline"),
+        enforce_eager=enforce_eager,
     )
 
     print("\nWarming up...")
@@ -339,7 +341,7 @@ def main():
             "max_num_batched_tokens": max_num_batched_tokens,
             "max_model_len": 1024,
             "gpu_memory_utilization": 0.85,
-            "enforce_eager": True,
+            "enforce_eager": enforce_eager,
             "temperature": 1.0,
             "seed": args.seed,
         },
