@@ -1,287 +1,375 @@
-# Mixed-Batch Chunked Prefill：nano-vLLM 调度优化
+# Multi-Request Chunked Prefill — Benchmark Report
 
 ## 1. 项目背景
 
-本项目基于 [nano-vLLM](https://github.com/2530270770/nano-vllm-learning)，实现 Mixed-Batch Chunked Prefill 调度优化。
+本项目基于 nano-vLLM，实现多请求 Chunked Prefill 调度优化。
 
-在 LLM 推理过程中，主要存在两种计算阶段：
+原始 Scheduler 存在的限制是：Chunked Prefill 主要围绕第一个 Prefill 请求进行处理，无法充分利用多个请求之间的 Token Budget。
 
-- **Prefill**：处理输入 Prompt，计算并写入 KV Cache。
-- **Decode**：基于已有 KV Cache，自回归地逐 Token 生成输出。
+本次优化的主要目标：
 
-原有调度方式在处理多个请求时，Prefill 和 Decode 的调度存在一定局限：
+1. 支持多个请求同时参与 Chunked Prefill。
+2. Decode 优先调度，减少已有请求的生成等待。
+3. 引入独立的 Decode 请求数量上限。
+4. 使用 Water-Filling 算法分配 Prefill Token Budget。
+5. KV Cache 分配失败时跳过当前请求，继续尝试其他请求。
+6. 允许不同请求在不同调度周期参与 Prefill。
 
-1. 长 Prompt 的 Prefill 可能占用较大的计算预算，影响 Decode 请求的执行。
-2. 多个 Prefill 请求同时等待时，单个长请求可能占用大量 Token Budget。
-3. Prefill 和 Decode 的计算特征不同，需要采用不同的执行策略。
-4. 当多个请求混合到达时，需要合理分配 GPU 计算预算和并发执行名额。
+### 当前调度设计
 
-因此，本项目希望实现一种 **Decode 优先、Prefill 分块、混合执行** 的调度机制，在保证请求正确执行的前提下，提高不同请求之间的资源利用效率。
-
-## 2. 项目目标
-
-本项目主要实现以下目标：
-
-- **Decode 优先调度**：优先保证正在生成 Token 的请求获得执行机会，降低 Prefill 对 Decode 的影响。
-- **Mixed-Batch 执行**：在同一个 Engine Step 中，同时安排 Decode 和 Prefill 请求。
-- **Chunked Prefill**：将较长的 Prompt 拆分成多个 Chunk，分多个 Step 完成 Prefill。
-- **公平分配 Token Budget**：将 Decode 执行后的剩余预算分配给多个 Prefill 请求，避免单个长请求占用全部预算。
-- **KV Cache 状态管理**：确保跨 Step 的 Prefill 能够正确维护 KV Cache 和请求进度。
-- **保持原有推理流程兼容**：尽量复用 nano-vLLM 原有的 Scheduler、ModelRunner 和 LLMEngine 架构。
-
-## 3. 核心设计
-
-### 3.1 Mixed-Batch 调度
-
-每个 Engine Step 分为两个执行阶段：
-
-1. Decode Forward
-2. Prefill Forward
-
-执行顺序如下：
-
-```text
-                 LLMEngine.step()
-                        |
-                        v
-                 Scheduler.schedule()
-                        |
-              +---------+---------+
-              |                   |
-              v                   v
-         Decode Batch        Prefill Batch
-              |                   |
-              v                   |
-        run_decode()              |
-              |                   |
-              v                   |
-       Decode Postprocess         |
-              |                   |
-              +---------+---------+
-                        |
-                        v
-                 run_prefill()
-                        |
-                        v
-               Prefill Postprocess
-                        |
-                        v
-                   Next Step
-```
-
-这里的 Mixed-Batch 并不是将 Decode 和 Prefill 合并成一个统一的 GPU Tensor Batch，而是在同一个 Engine Step 中分别执行两个 Forward。
-
-这样可以针对两种计算阶段采用不同的执行方式：
-
-- Decode：使用独立的 Decode 执行路径，在支持的配置下使用 CUDA Graph。
-- Prefill：使用独立的 Prefill 执行路径，采用 Eager 模式处理分块输入。
-
-### 3.2 Decode 优先调度
-
-Scheduler 首先从 Running 队列中选择 Decode 请求。
-
-Decode 调度同时受到两个条件约束：
-
-- Decode 并发数量上限。
-- 全局 Token Budget 上限。
-
-设：
-
-- \(M_s\)：最大并发请求数。
-- \(M_d\)：最大 Decode 请求数。
-- \(M_b\)：最大 Batch Token 数。
-
-Decode 最大调度数量为：
-
-\[
-D_{\max}=\min(M_d,M_s,M_b)
-\]
-
-实际 Decode 数量为 \(D\)，每个 Decode 请求在当前 Step 消耗一个 Token Budget。
-
-因此，Prefill 可以使用的剩余资源为：
-
-\[
-S_p=M_s-D
-\]
-
-\[
-B_p=M_b-D
-\]
-
-其中：
-
-- \(S_p\)：Prefill 剩余并发名额。
-- \(B_p\)：Prefill 剩余 Token Budget。
-
-### 3.3 Chunked Prefill
-
-对于一个尚未完成 Prefill 的请求，不再要求一次性处理全部剩余 Prompt Token，而是根据当前可用预算分配一部分 Token。
-
-假设一个请求还剩 \(R_i\) 个 Prompt Token，则当前 Step 分配的 Chunk 大小为：
-
-\[
-0\le C_i\le R_i
-\]
-
-所有 Prefill 请求需要满足：
-
-\[
-\sum_i C_i\le B_p
-\]
-
-每个 Step 完成后：
-
-- 更新请求已经处理的 Prompt Token 数量。
-- 保留已经计算的 KV Cache。
-- 尚未完成 Prefill 的请求重新进入 Waiting 队列。
-- 已经完成 Prefill 的请求进入 Running 队列，后续参与 Decode。
-
-这样，长 Prompt 可以跨多个 Engine Step 完成计算，不必一次性占用大量 Token Budget。
-
-### 3.4 Integer Water-Filling 公平分配
-
-当多个 Prefill 请求同时等待时，采用 Integer Water-Filling 策略分配剩余 Token Budget。
-
-分配时考虑：
-
-- 每个请求剩余的 Prompt Token 数量。
-- 当前剩余 Token Budget。
-- 当前可用 Prefill 并发名额。
-
-目标是在满足总预算约束的情况下，尽可能均衡地分配 Chunk。
-
-对于每个请求：
-
-\[
-C_i=\min(R_i,L)
-\]
-
-其中 \(L\) 为当前可分配的均分水位。
-
-由于 Token 数量必须为整数，分配过程中还需要处理剩余的 Token，将剩余预算依次分配给尚未满足需求的请求。
-
-该策略可以避免简单轮询或按请求长度分配造成的预算使用不均衡。
-
-### 3.5 KV Cache 管理
-
-当前实现采用以下方式管理 Prefill 的 KV Cache：
-
-- 请求首次进入 Prefill 时，为整条 Sequence 分配所需 KV Cache。
-- 后续 Chunk 计算复用已经分配的 KV Cache。
-- 每次 Prefill Forward 只处理当前 Chunk 对应的 Token。
-- 通过 `num_cached_tokens` 等状态记录 Prefill 进度。
-- Prefill 尚未完成时，不提前将其当作 Decode 请求处理。
-- Prefill 完成后，才进入正常 Decode 生命周期。
-
-需要注意：**当前实现的 Chunked Prefill 是分块计算，不是逐 Chunk 增量分配物理 KV Cache。**
-
-如果首次分配整条 Sequence 的 KV Cache 失败，Scheduler 会跳过当前请求，继续尝试后续 Waiting 请求，避免单个请求的分配失败阻塞其他请求。
-
-## 4. 主要修改模块
-
-| 文件 | 主要修改内容 |
+| 配置 | 策略 |
 |---|---|
-| `nanovllm/engine/scheduler.py` | 实现 Decode 优先调度、剩余预算计算、Prefill 候选筛选、Integer Water-Filling、Chunked Prefill 和 KV 分配失败处理 |
-| `nanovllm/engine/model_runner.py` | 将 Decode 和 Prefill 拆分为独立执行路径，分别处理两种 Forward |
-| `nanovllm/engine/llm_engine.py` | 调整 Engine Step 执行流程，先执行 Decode，再执行 Prefill，并分别完成 Postprocess |
-| `tests/test_scheduler.py` | 增加调度策略、预算分配、KV 分配失败、跨 Step Chunked Prefill 和 Decode 名额管理等测试 |
-| `tests/test_model_runner.py` | 覆盖 ModelRunner 相关执行逻辑 |
-| `tests/test_model_runner_gpu.py` | 增加 GPU 测试资源清理，降低测试之间的显存干扰 |
-| `tests/test_llm_engine.py` | 覆盖 Engine 调度与执行流程 |
-| `tests/test_llm_engine_gpu.py` | 增加真实 GPU Mixed-Batch 集成测试 |
+| Decode 优先级 | Strict Priority |
+| Decode 最大请求数 | 8 |
+| Prefill Budget 分配 | Integer Water-Filling |
+| KV Cache 分配失败 | Skip |
+| Prefill 执行模式 | Eager |
+| Decode 执行模式 | Eager |
 
-## 5. 测试验证
+---
 
-### 5.1 Scheduler 单元测试
+## 2. Benchmark 环境与配置
 
-主要验证：
+### 基础环境
 
-- 只有 Prefill 请求时的调度。
-- 只有 Decode 请求时的调度。
-- Decode 和 Prefill 混合调度。
-- Decode 独立并发上限。
-- Decode 与 Prefill 共享 Token Budget。
-- KV Cache 分配失败后跳过当前请求。
-- Integer Water-Filling 分配结果。
-- Chunked Prefill 跨多个 Step 执行。
-- Decode 请求发生 KV Cache 压力时的抢占处理。
-- Decode 请求结束后，Prefill 请求能够接管 Decode 名额。
-- Prefill 并发名额不足时，剩余请求能够继续保留在 Waiting 队列。
+| 项目 | 配置 |
+|---|---|
+| 推理框架 | nano-vLLM |
+| 模型 | Qwen3-0.6B |
+| GPU | RTX 3060 Laptop 6GB |
+| PyTorch | 2.6.0 |
+| CUDA | 12.4 |
+| 执行模式 | Eager |
+| 随机种子 | 42 |
+| 每种配置重复次数 | 5 |
 
-### 5.2 GPU 集成测试
+Baseline 和 Optimized 分别使用独立代码目录：
 
-使用 Qwen3-0.6B 在真实 GPU 上验证 Mixed-Batch 执行流程。
+- Baseline：`~/nano-vllm-baseline`
+- Optimized：`~/nano-vllm`
 
-测试覆盖：
+运行时通过 `PYTHONPATH` 指定对应代码目录，并验证 `nanovllm.__file__`，避免错误导入。
 
-- 真实 Scheduler、ModelRunner 和 LLMEngine。
-- 同一个 Engine Step 中先执行 Decode，再执行 Prefill。
-- 多个 Prefill 请求分多个 Step 完成。
-- Prefill 完成后进入 Decode。
-- 不同请求的 Prefill 进度能够独立维护。
+### 测试场景
 
-一次测试中观察到的执行顺序：
+目前已经完成两个场景的五轮重复测试。
+
+| 参数 | Staggered | All-at-Once |
+|---|---:|---:|
+| Requests | 4 | 4 |
+| Prompt tokens/request | 512 | 128 |
+| Total prompt tokens | 2048 | 512 |
+| Output tokens/request | 8 | 8 |
+| Max batched tokens | 512 | 16384 |
+| Arrival | 分批到达 | 同时到达 |
+
+**Staggered：**
+
+先提交第一个请求，执行一个 Engine Step 后，再提交剩余三个请求。
+
+主要考察：
+- Decode 优先调度。
+- 新请求到达时的 Prefill 等待。
+- Decode 和 Prefill 之间的调度权衡。
+
+**All-at-Once：**
+
+四个请求同时进入 Waiting Queue。
+
+主要考察：
+- 多请求同时到达。
+- Prefill 和 Decode 的整体执行表现。
+- 多请求调度下的基本性能表现。
+
+注意：当前 All-at-Once 使用 128 tokens 的 Prompt 和 16384 的 Token Budget，四个请求可以一次完成 Prefill，因此尚未真正触发多请求 Chunked Prefill 的预算分配压力。
+
+---
+
+## 3. Staggered Benchmark
+
+### 3.1 Baseline 五轮结果
+
+| Run | Total Time (ms) | Throughput (tok/s) | TTFT (ms) | TPOT (ms) | Latency (ms) |
+|---|---:|---:|---:|---:|---:|
+| 1 | 918.83 | 34.83 | 123.28 | 95.50 | 791.80 |
+| 2 | 985.88 | 32.46 | 135.77 | 97.51 | 818.33 |
+| 3 | 958.60 | 33.38 | 161.25 | 93.13 | 813.17 |
+| 4 | 884.32 | 36.19 | 115.80 | 94.43 | 776.83 |
+| 5 | 926.02 | 34.56 | 119.07 | 98.43 | 808.06 |
+
+### 3.2 Optimized 五轮结果
+
+| Run | Total Time (ms) | Throughput (tok/s) | TTFT (ms) | TPOT (ms) | Latency (ms) |
+|---|---:|---:|---:|---:|---:|
+| 1 | 1081.58 | 29.59 | 504.95 | 57.80 | 909.56 |
+| 2 | 984.77 | 32.49 | 478.76 | 59.33 | 894.06 |
+| 3 | 1114.78 | 28.71 | 520.08 | 57.80 | 924.67 |
+| 4 | 1109.23 | 28.85 | 509.98 | 60.33 | 932.29 |
+| 5 | 981.73 | 32.60 | 485.84 | 58.16 | 892.97 |
+
+### 3.3 统计对比
+
+以下以五轮测试的中位数作为主要比较依据。
+
+| 指标 | Baseline 均值 | Optimized 均值 | Baseline 中位数 | Optimized 中位数 |
+|---|---:|---:|---:|---:|
+| Total Time | 934.73 | 1054.42 | 926.02 | 1081.58 |
+| Throughput | 34.28 | 30.45 | 34.56 | 29.59 |
+| TTFT | 131.03 | 499.92 | 123.28 | 504.95 |
+| TPOT | 95.80 | 58.68 | 95.50 | 58.16 |
+| Request Latency | 801.64 | 910.71 | 808.06 | 909.56 |
+
+### 3.4 性能变化
+
+以中位数计算：
+
+| 指标 | 相对变化 | 结果 |
+|---|---:|---|
+| Total Time | +16.80% | 退化 |
+| Throughput | -14.38% | 退化 |
+| TTFT | +309.60% | 明显退化 |
+| TPOT | -39.10% | 改善 |
+| Request Latency | +12.56% | 退化 |
+
+### 3.5 结果分析
+
+Staggered 场景呈现出明显的 Decode 优先调度特征。
+
+**正向结果：**
+
+TPOT 从 95.50 ms 降低到 58.16 ms，改善约 39.10%。
+
+说明 Decode 优先策略能够减少已有请求在生成阶段的等待时间。
+
+**负向结果：**
+
+TTFT 从 123.28 ms 上升到 504.95 ms，增加约 309.60%。
+
+新请求需要等待 Decode 优先调度完成，导致首 Token 延迟明显增加。
+
+同时：
+- 整体耗时增加约 16.80%。
+- 吞吐量下降约 14.38%。
+- 平均请求延迟增加约 12.56%。
+
+**阶段性结论：**
+
+当前实现改善了 Decode 延迟，但在 Staggered 场景中牺牲了新请求的 TTFT 和整体吞吐量。
+
+Decode 优先策略与 Prefill 延迟之间存在明显的调度权衡，需要进一步优化。
+
+---
+
+## 4. All-at-Once Benchmark
+
+### 4.1 Baseline 五轮结果
+
+| Run | Total Time (ms) | Throughput (tok/s) | TTFT (ms) | TPOT (ms) | Latency (ms) |
+|---|---:|---:|---:|---:|---:|
+| 1 | 637.69 | 50.18 | 364.67 | 39.00 | 637.66 |
+| 2 | 647.41 | 49.43 | 347.26 | 42.87 | 647.38 |
+| 3 | 659.72 | 48.51 | 364.01 | 42.24 | 659.69 |
+| 4 | 696.25 | 45.96 | 349.96 | 49.47 | 696.22 |
+| 5 | 637.75 | 50.18 | 359.88 | 39.69 | 637.72 |
+
+### 4.2 Optimized 五轮结果
+
+| Run | Total Time (ms) | Throughput (tok/s) | TTFT (ms) | TPOT (ms) | Latency (ms) |
+|---|---:|---:|---:|---:|---:|
+| 1 | 609.38 | 52.51 | 356.89 | 36.06 | 609.33 |
+| 2 | 627.00 | 51.04 | 346.82 | 40.02 | 626.98 |
+| 3 | 704.05 | 45.45 | 349.68 | 50.62 | 704.02 |
+| 4 | 714.84 | 44.77 | 367.01 | 49.69 | 714.81 |
+| 5 | 612.32 | 52.26 | 350.03 | 37.47 | 612.29 |
+
+### 4.3 统计对比
+
+| 指标 | Baseline 均值 | Optimized 均值 | Baseline 中位数 | Optimized 中位数 |
+|---|---:|---:|---:|---:|
+| Total Time | 655.76 | 653.52 | 647.41 | 627.00 |
+| Throughput | 48.85 | 49.21 | 49.43 | 51.04 |
+| TTFT | 357.16 | 354.09 | 359.88 | 350.03 |
+| TPOT | 42.65 | 42.77 | 42.24 | 40.02 |
+| Request Latency | 655.73 | 653.49 | 647.38 | 626.98 |
+
+### 4.4 性能变化
+
+以中位数计算：
+
+| 指标 | 相对变化 | 结果 |
+|---|---:|---|
+| Total Time | -3.15% | 略有改善 |
+| Throughput | +3.26% | 略有改善 |
+| TTFT | -2.74% | 略有改善 |
+| TPOT | -5.26% | 略有改善 |
+| Request Latency | -3.15% | 略有改善 |
+
+### 4.5 结果分析
+
+All-at-Once 场景中，Optimized 的中位数指标均略有改善。
+
+但是需要注意：
+
+- Baseline Total Time 样本标准差约为 24.37 ms。
+- Optimized Total Time 样本标准差约为 51.63 ms。
+
+Optimized 的测试波动明显更大。
+
+从均值来看：
+- Total Time 仅改善约 0.34%。
+- Throughput 仅提升约 0.72%。
+- TPOT 均值反而略微增加。
+
+**阶段性结论：**
+
+当前测试没有发现 All-at-Once 场景下明显的整体性能退化，但也没有足够证据证明优化带来了稳定的性能收益。
+
+更重要的是，本次测试的总 Prefill Token 数只有 512，而 Token Budget 为 16384。
+
+因此四个请求可以在一个 Prefill Step 中全部完成，未真正考察多请求 Chunked Prefill 的核心调度能力。
+
+---
+
+## 5. 两种场景的综合结论
+
+| 对比维度 | Staggered | All-at-Once |
+|---|---|---|
+| Decode TPOT | 明显改善 | 中位数略有改善 |
+| Prefill TTFT | 明显退化 | 中位数略有改善 |
+| 整体吞吐量 | 下降 | 基本持平 |
+| 总耗时 | 增加 | 基本持平 |
+| 性能稳定性 | 有一定波动 | Optimized 波动较大 |
+| 是否真正测试多请求 Chunked Prefill | 未充分验证 | 未触发 |
+
+目前可以得到以下认识：
+
+1. Decode 优先调度确实改善了 Decode 阶段的延迟。
+2. 严格 Decode 优先策略可能导致新请求 Prefill 等待时间过长。
+3. All-at-Once 场景目前没有证明多请求 Chunked Prefill 的实际收益。
+4. 当前优化不能简单归纳为整体推理性能提升。
+5. 需要进一步验证 Water-Filling 和多请求 Chunked Prefill 的实际调度效果。
+
+---
+
+## 6. 下一阶段：真正的 Multi-Request Chunked Prefill 压力测试
+
+接下来需要增加一个专门的压力测试场景。
+
+### 测试配置
+
+| 参数 | 数值 |
+|---|---:|
+| Requests | 4 |
+| Prompt tokens/request | 512 |
+| Total prompt tokens | 2048 |
+| Output tokens/request | 8 |
+| Max batched tokens | 512 |
+| Arrival | All-at-Once |
+
+### 预期验证内容
+
+1. 四个请求同时进入 Waiting Queue。
+2. Prefill Token Budget 限制为 512。
+3. 多个请求参与同一轮 Chunked Prefill。
+4. Water-Filling 算法分配 Prefill Token Budget。
+5. 请求可以在不同 Step 中继续完成剩余 Prefill。
+6. Prefill 完成的请求能够进入 Decode。
+7. Decode 优先策略不会造成不可接受的 Prefill 饥饿。
+8. KV Cache 分配失败时能够跳过当前请求并继续调度其他请求。
+
+### 重点指标
+
+- Mean TTFT
+- Mean TPOT
+- Request Latency
+- Output Throughput
+- Total Time
+- Prefill Tokens Per Step
+- Decode Tokens Per Step
+- 每轮参与 Prefill 的请求数量
+- 每个请求完成 Prefill 所需的 Step 数
+
+### 测试原则
+
+Baseline 和 Optimized 必须使用完全一致的：
+- 模型与硬件环境
+- 请求数量
+- Prompt 长度
+- Output 长度
+- Token Budget
+- 随机种子
+- Eager 配置
+
+每种配置至少重复五轮。
+
+同时保留每轮原始 JSON，不能只记录汇总数据。
+
+---
+
+## 7. Benchmark 文件组织
+
+当前测试结果保存在两个独立代码目录中。
 
 ```text
-['run_decode', 'run_prefill']
+nano-vllm/
+└── outputs/
+    └── benchmark/
+        └── chunkprefill/
+            ├── optimized_staggered_run1.json
+            ├── optimized_staggered_run2.json
+            ├── optimized_staggered_run3.json
+            ├── optimized_staggered_run4.json
+            ├── optimized_staggered_run5.json
+            ├── optimized_all_at_once_run1.json
+            ├── optimized_all_at_once_run2.json
+            ├── optimized_all_at_once_run3.json
+            ├── optimized_all_at_once_run4.json
+            └── optimized_all_at_once_run5.json
+
+nano-vllm-baseline/
+└── outputs/
+    └── benchmark/
+        └── chunkprefill/
+            ├── baseline_staggered_run1.json
+            ├── baseline_staggered_run2.json
+            ├── baseline_staggered_run3.json
+            ├── baseline_staggered_run4.json
+            ├── baseline_staggered_run5.json
+            ├── baseline_all_at_once_run1.json
+            ├── baseline_all_at_once_run2.json
+            ├── baseline_all_at_once_run3.json
+            ├── baseline_all_at_once_run4.json
+            └── baseline_all_at_once_run5.json
 ```
 
-多轮 Chunked Prefill 的进度验证：
+此外，目录中还保留了早期 Smoke Test 和 Rerun 结果。正式五轮统计以 `*_run1.json` 至 `*_run5.json` 为准，不混入早期单次测试。
 
-```text
-(64, 62, 63)
-(96, 93, 63)
-(97, 96, 3)
-```
+---
 
-最终两个请求分别缓存了 97 和 96 个 Prompt Token，并正常进入后续生成阶段。
+## 8. 当前项目进度
 
-### 5.3 完整测试结果
+| 工作内容 | 状态 |
+|---|---|
+| 多请求 Chunked Prefill 调度实现 | 已完成初步实现 |
+| Decode 优先调度 | 已实现 |
+| Decode 独立数量限制 | 已实现 |
+| Integer Water-Filling | 已实现 |
+| KV Cache 分配失败跳过策略 | 已实现 |
+| Scheduler 单元测试 | 已通过 |
+| ModelRunner 相关测试 | 已通过此前测试 |
+| Staggered 五轮 Baseline | 已完成 |
+| Staggered 五轮 Optimized | 已完成 |
+| All-at-Once 五轮 Baseline | 已完成 |
+| All-at-Once 五轮 Optimized | 已完成 |
+| 真正的多请求 Chunked Prefill 压力测试 | 待完成 |
+| 压力测试下的性能分析 | 待完成 |
 
-执行命令：
+## 9. 最终阶段性评价
 
-```bash
-RUN_MODEL_RUNNER_GPU_TESTS=1 \
-NANOVLLM_MODEL_PATH=/home/chen17/huggingface/Qwen3-0.6B \
-python -m pytest -v -s \
-tests/test_scheduler.py \
-tests/test_model_runner.py \
-tests/test_model_runner_gpu.py \
-tests/test_llm_engine.py \
-tests/test_llm_engine_gpu.py
-```
+截至目前，项目已经完成了多请求 Chunked Prefill 的主要调度逻辑实现和基础测试，并完成了两种请求到达模式下的 Baseline/Optimized 五轮 Benchmark。
 
-当前测试结果：
+现有结果证明了 Decode 优先策略对 TPOT 的改善，但也暴露了 Staggered 场景下 TTFT 明显恶化的问题。
 
-```text
-21 passed in 18.95s
-```
+对于多请求 Chunked Prefill 本身，目前还缺少真正具有 Token Budget 竞争的压力测试，因此暂时不能宣称 Water-Filling 已经带来了性能提升。
 
-测试覆盖 Scheduler、ModelRunner、LLMEngine 的单元测试和 GPU 集成测试。
-
-## 6. 当前实现的边界
-
-当前版本主要完成了 Mixed-Batch Chunked Prefill 的功能实现和正确性验证。
-
-仍有一些值得进一步研究的方向：
-
-1. **性能 Benchmark**：对比优化前后的 TTFT、TPOT、吞吐量和显存使用情况。
-2. **不同负载下的性能分析**：测试不同 Prompt 长度、并发请求数和 Decode/Prefill 混合比例。
-3. **增量 KV Cache 分配**：研究是否可以在 Prefill 过程中按需分配 KV Cache Block，降低长 Prompt 请求首次分配时的显存压力。
-4. **CUDA Graph 兼容性**：进一步验证不同混合调度配置下的 CUDA Graph 执行表现。
-
-需要强调的是：目前测试通过说明调度功能和执行流程通过了相应的正确性验证，**并不代表已经证明端到端推理性能得到提升**。实际性能收益需要通过统一配置下的 Benchmark 得出。
-
-## 7. 项目总结
-
-本项目围绕 nano-vLLM 的推理调度流程，实现了 Mixed-Batch Chunked Prefill：
-
-- 将 Decode 和 Prefill 拆分为独立执行路径。
-- 在同一个 Engine Step 中优先执行 Decode，再利用剩余预算执行 Prefill。
-- 通过 Chunked Prefill 支持长 Prompt 跨多个 Step 处理。
-- 通过 Integer Water-Filling 实现多个 Prefill 请求之间的预算分配。
-- 处理 KV Cache 分配失败、请求状态流转和 Decode 抢占等边界情况。
-- 通过 Scheduler 单元测试和真实 GPU 集成测试验证实现正确性。
-
-项目的核心目标是探索 LLM 推理过程中 Decode 与 Prefill 的协同调度方式，为后续推理吞吐优化、KV Cache 管理优化和更复杂的批处理策略打下基础。
+**下一阶段的重点不再是单纯增加普通 Benchmark 次数，而是构造真正触发多请求 Chunked Prefill 的压力场景，验证调度正确性、公平性和实际性能收益。**
