@@ -256,7 +256,13 @@ class ModelRunner:
         context_lens = torch.zeros(max_bs, dtype=torch.int32)
         block_tables = torch.zeros(max_bs, max_num_blocks, dtype=torch.int32)
         outputs = torch.zeros(max_bs, hf_config.hidden_size)
-        self.graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))
+        self.graph_bs = [bs for bs in (1, 2, 4, 8) if bs <= max_bs]
+        self.graph_bs += list(range(16, max_bs + 1, 16))
+
+        if max_bs not in self.graph_bs:
+            self.graph_bs.append(max_bs)
+
+        self.graph_bs = sorted(set(self.graph_bs))
         self.graphs = {}
         self.graph_pool = None
 
