@@ -163,7 +163,7 @@ def main():
         max_model_len=1024,
         gpu_memory_utilization=0.85,
         tensor_parallel_size=1,
-        enforce_eager=True,
+        enforce_eager=(args.variant == "baseline"),
     )
 
     print("\nWarming up...")
