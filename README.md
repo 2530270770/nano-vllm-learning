@@ -774,7 +774,7 @@ Prefill 完成定义：执行完某个 Engine Step 后，`num_cached_tokens >= n
 
 - 代码已推送到 `chunkprefill` 分支。
 - 尚未在 RTX 3060 Laptop 上运行，不能宣称 Trace 数值已验证。
-- 新 JSON 生成后，先检查每个请求的 `prefill_total_allocated_tokens == prompt_tokens`，且 Chunk 的 Cached Token 区间连续、不重叠；再分析 cap8 / cap16 的公平性。
+- 新 JSON 生成后，先检查每个请求的 `prefill_chunks[0].cached_tokens_before + prefill_total_allocated_tokens == prompt_tokens`（考虑可能命中的 Prefix Cache），且各 Chunk 的 Cached Token 区间连续、不重叠；再分析 cap8 / cap16 的公平性。
 - 新增的 GPU 阶段计时也需要在真实运行中确认事件记录完整且非负。
 
 建议先执行 1 次 32 请求 Smoke，再执行 cap8 / cap16 各 5 轮正式实验。不要将旧 JSON 与新增字段混合统计。
