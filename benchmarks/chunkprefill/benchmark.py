@@ -327,6 +327,7 @@ def main():
     finish_times = [None] * args.num_requests
 
     step_records = []
+    scheduler_step_records = []
     first_prefill_steps = {}
     first_prefill_times = {}
     schedule_observer = {
@@ -459,6 +460,7 @@ def main():
         step_start = time.perf_counter()
 
         _, decode_tokens, prefill_tokens = step_engine(engine)
+        scheduler_step_records.append(dict(engine.scheduler.last_schedule_stats))
 
         torch.cuda.synchronize()
         step_end = time.perf_counter()
@@ -651,6 +653,11 @@ def main():
         },
         "requests": request_results,
         "steps": step_records,
+        "scheduler_steps": scheduler_step_records,
+        "model_runner_stats": {
+            key: (dict(value) if hasattr(value, "items") else value)
+            for key, value in engine.model_runner.execution_stats.items()
+        },
     }
 
     if args.output:
