@@ -41,6 +41,11 @@ def parse_args():
         default=None,
     )
     parser.add_argument(
+        "--enable-prefill-aging",
+        action="store_true",
+        help="Enable Prefill Aging scheduling.",
+    )
+    parser.add_argument(
     "--execution-mode",
     choices=["auto", "eager", "cudagraph"],
     default="auto",
@@ -188,6 +193,7 @@ def main():
         tensor_parallel_size=1,
         enforce_eager=enforce_eager,
         max_num_prefill_seqs=args.max_num_prefill_seqs,
+        enable_prefill_aging=args.enable_prefill_aging,
     )
 
     print("\nWarming up...")
@@ -368,6 +374,7 @@ def main():
             "temperature": 1.0,
             "seed": args.seed,
             "max_num_prefill_seqs": args.max_num_prefill_seqs,
+            "enable_prefill_aging": args.enable_prefill_aging,
         },
         "summary": {
             "total_time_ms": total_time * 1000,

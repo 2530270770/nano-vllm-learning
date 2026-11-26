@@ -12,6 +12,7 @@ def make_scheduler(
     max_num_batched_tokens=1024,
     num_kvcache_blocks=32,
     max_num_prefill_seqs=None,
+    enable_prefill_aging=False,
 ):
     """创建不依赖真实模型和 GPU 的 Scheduler。"""
     config = SimpleNamespace(
@@ -22,6 +23,7 @@ def make_scheduler(
         kvcache_block_size=256,
         num_kvcache_blocks=num_kvcache_blocks,
         max_num_prefill_seqs=max_num_prefill_seqs,
+        enable_prefill_aging=enable_prefill_aging,
     )
     return Scheduler(config)
 
@@ -537,3 +539,66 @@ def test_prefill_concurrency_limit_with_decode():
 
     # 其余 Prefill 请求仍然保留在 Waiting 队列。
     assert list(scheduler.waiting) == prefill_seqs[1:]
+
+def test_prefill_aging_prioritizes_older_request():
+    """等待时间更长的 Prefill 请求应该优先获得调度名额。"""
+    scheduler = make_scheduler(
+        max_num_seqs=4,
+        max_num_batched_tokens=100,
+        num_kvcache_blocks=4,
+        max_num_prefill_seqs=1,
+        enable_prefill_aging=True,
+    )
+
+    newer_seq = make_seq(20)
+    older_seq = make_seq(20)
+
+    # 新请求先进入队列，老请求后进入队列。
+    scheduler.add(newer_seq)
+    scheduler.add(older_seq)
+
+    # 模拟老请求已经等待了更多轮。
+    older_seq.prefill_wait_steps = 5
+
+    output = scheduler.schedule()
+
+    # 虽然 newer_seq 在队列前面，
+    # 但 older_seq 等待时间更长，应该先被调度。
+    assert output.prefill_seqs == [older_seq]
+
+    assert older_seq.prefill_wait_steps == 0
+
+    # 新请求没有被丢弃。
+    assert list(scheduler.waiting) == [newer_seq]
+
+    # 未获得调度名额的新请求年龄继续增加。
+    assert newer_seq.prefill_wait_steps == 1
+
+
+def test_prefill_aging_disabled_preserves_fifo():
+    """关闭 Aging 时，保持原有 FIFO 候选选择行为。"""
+    scheduler = make_scheduler(
+        max_num_seqs=4,
+        max_num_batched_tokens=100,
+        num_kvcache_blocks=4,
+        max_num_prefill_seqs=1,
+        enable_prefill_aging=False,
+    )
+
+    newer_seq = make_seq(20)
+    older_seq = make_seq(20)
+
+    scheduler.add(newer_seq)
+    scheduler.add(older_seq)
+
+    older_seq.prefill_wait_steps = 5
+
+    output = scheduler.schedule()
+
+    # 关闭 Aging 时仍然按照原始队列顺序。
+    assert output.prefill_seqs == [newer_seq]
+
+    # 关闭 Aging 不会修改等待计数。
+    assert older_seq.prefill_wait_steps == 5
+
+    assert list(scheduler.waiting) == [older_seq]

@@ -28,6 +28,12 @@ class Scheduler:
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()
 
+        self.enable_prefill_aging = getattr(
+            config,
+            "enable_prefill_aging",
+            False,
+        )
+
     def is_finished(self):
         return not self.waiting and not self.running
 
@@ -111,52 +117,80 @@ class Scheduler:
 
         candidates = []
 
-        # 记录本轮开始时 Waiting 队列的长度。
-        # 防止刚刚重新放回队尾的请求在本轮被重复检查。
+        # 记录本轮开始时 Waiting 队列的长度
         waiting_count = len(self.waiting)
 
+        waiting_candidates = []
+
+        # ----------------------------------------------
+        # 3.1 收集本轮开始时所有 Waiting 请求
+        # ----------------------------------------------
+
         for _ in range(waiting_count):
-
-            # 已经收集到足够的 Prefill 请求
-            if len(candidates) >= max_prefill_seqs:
-                break
-
-            if not self.waiting:
-                break
-
             seq = self.waiting.popleft()
 
-            # ----------------------------------------------
-            # 3.1 首次调度：分配 KV Cache
-            # ----------------------------------------------
+            if self.enable_prefill_aging:
+                # 每经过一轮调度，等待中的请求年龄增加
+                seq.prefill_wait_steps += 1
+
+            waiting_candidates.append(seq)
+
+        # ----------------------------------------------
+        # 3.2 按等待时间排序
+        # ----------------------------------------------
+
+        if self.enable_prefill_aging:
+            # 等待时间越长，越优先获得 Prefill 调度名额
+            #
+            # Python 排序是稳定排序：
+            # 等待时间相同时，保留原来的队列顺序。
+            waiting_candidates.sort(
+                key=lambda seq: seq.prefill_wait_steps,
+                reverse=True,
+            )
+
+        # ----------------------------------------------
+        # 3.3 选择 Prefill 候选请求
+        # ----------------------------------------------
+
+        for seq in waiting_candidates:
+
+            # 已经达到本轮 Prefill 并发上限
+            if len(candidates) >= max_prefill_seqs:
+                self.waiting.append(seq)
+                continue
+
+            # ------------------------------------------
+            # 首次调度：分配 KV Cache
+            # ------------------------------------------
 
             if not seq.block_table:
                 num_cached_blocks = self.block_manager.can_allocate(seq)
 
-                # KV Cache 不足：跳过当前请求，继续检查后面的请求
+                # KV Cache 不足：
+                # 跳过当前请求，继续检查后面的请求
                 if num_cached_blocks == -1:
                     self.waiting.append(seq)
                     continue
 
-                # 分配整条 Sequence 所需的 KV Cache Block
                 self.block_manager.allocate(seq, num_cached_blocks)
 
-            # ----------------------------------------------
-            # 3.2 计算尚未 Prefill 的 Token 数量
-            # ----------------------------------------------
+            # ------------------------------------------
+            # 计算剩余 Prefill Token
+            # ------------------------------------------
 
             remaining_seq_tokens = (
                 seq.num_tokens - seq.num_cached_tokens
             )
 
-            # 理论上 Waiting 中不应该存在已经完成 Prefill 的请求
+            # 理论上 Waiting 中不应该有已经完成 Prefill 的请求
             if remaining_seq_tokens <= 0:
                 seq.status = SequenceStatus.RUNNING
+                seq.prefill_wait_steps = 0
                 self.running.append(seq)
                 continue
 
             candidates.append((seq, remaining_seq_tokens))
-
         # ==================================================
         # 4. Integer Water-filling
         # ==================================================
@@ -231,6 +265,9 @@ class Scheduler:
 
                 seq.num_scheduled_tokens = chunk_tokens
                 seq.is_prefill = True
+
+                # 请求已经获得本轮 Prefill 调度机会
+                seq.prefill_wait_steps = 0
 
                 prefill_seqs.append(seq)
 

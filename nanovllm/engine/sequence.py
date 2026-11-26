@@ -25,6 +25,10 @@ class Sequence:
         self.num_cached_tokens = 0
         self.num_scheduled_tokens = 0
         self.is_prefill = True
+
+        # Prefill Aging：累计等待 Prefill 调度的轮数
+        self.prefill_wait_steps = 0
+
         self.block_table = []
         self.temperature = sampling_params.temperature
         self.max_tokens = sampling_params.max_tokens
@@ -71,10 +75,30 @@ class Sequence:
 
     def __getstate__(self):
         last_state = self.last_token if not self.is_prefill else self.token_ids
-        return (self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens, self.num_scheduled_tokens, self.block_table, last_state)
+
+        return (
+            self.num_tokens,
+            self.num_prompt_tokens,
+            self.num_cached_tokens,
+            self.num_scheduled_tokens,
+            self.block_table,
+            last_state,
+            self.prefill_wait_steps,
+        )
 
     def __setstate__(self, state):
-        self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens, self.num_scheduled_tokens, self.block_table, last_state = state
+        (
+            self.num_tokens,
+            self.num_prompt_tokens,
+            self.num_cached_tokens,
+            self.num_scheduled_tokens,
+            self.block_table,
+            last_state,
+            *extra,
+        ) = state
+
+        self.prefill_wait_steps = extra[0] if extra else 0
+
         if isinstance(last_state, list):
             self.token_ids = last_state
             self.last_token = self.token_ids[-1]
