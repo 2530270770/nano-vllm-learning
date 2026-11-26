@@ -131,6 +131,50 @@ def summarize_wait_metrics(requests):
     }
 
 
+def summarize_prefill_fairness(requests):
+    """Summarize per-request progress and waiting across all Prefill chunks."""
+    total_wait = [item["prefill_total_wait_steps"] for item in requests]
+    max_consecutive_wait = [
+        item["prefill_max_consecutive_wait_steps"] for item in requests
+    ]
+    chunk_counts = [item["prefill_chunk_count"] for item in requests]
+    completion_latency = [
+        item["prefill_completion_latency_ms"] for item in requests
+    ]
+    return {
+        "request_count": len(requests),
+        "mean_total_wait_steps": (
+            sum(total_wait) / len(total_wait) if total_wait else None
+        ),
+        "p50_total_wait_steps": percentile(total_wait, 0.50),
+        "p95_total_wait_steps": percentile(total_wait, 0.95),
+        "max_total_wait_steps": max(total_wait) if total_wait else None,
+        "mean_max_consecutive_wait_steps": (
+            sum(max_consecutive_wait) / len(max_consecutive_wait)
+            if max_consecutive_wait else None
+        ),
+        "max_consecutive_wait_steps": (
+            max(max_consecutive_wait) if max_consecutive_wait else None
+        ),
+        "mean_chunk_count": (
+            sum(chunk_counts) / len(chunk_counts) if chunk_counts else None
+        ),
+        "mean_prefill_completion_latency_ms": (
+            sum(completion_latency) / len(completion_latency)
+            if completion_latency else None
+        ),
+        "p50_prefill_completion_latency_ms": percentile(
+            completion_latency, 0.50
+        ),
+        "p95_prefill_completion_latency_ms": percentile(
+            completion_latency, 0.95
+        ),
+        "max_prefill_completion_latency_ms": (
+            max(completion_latency) if completion_latency else None
+        ),
+    }
+
+
 def set_seed(seed):
     random.seed(seed)
     torch.manual_seed(seed)
@@ -345,12 +389,21 @@ def main():
 
     step_records = []
     scheduler_step_records = []
+    prefill_chunk_records = []
     first_prefill_steps = {}
     first_prefill_times = {}
+    prefill_completion_steps = {}
+    prefill_completion_times = {}
+    prefill_total_wait_steps = [0] * args.num_requests
+    prefill_current_wait_steps = [0] * args.num_requests
+    prefill_max_consecutive_wait_steps = [0] * args.num_requests
     schedule_observer = {
         "step": 0,
         "decode_request_ids": [],
         "prefill_request_ids": [],
+        "prefill_chunks": [],
+        "schedule_time_ms": 0.0,
+        "gpu_events": [],
     }
 
     torch.cuda.synchronize()
@@ -361,8 +414,13 @@ def main():
     original_schedule = engine.scheduler.schedule
 
     def observed_schedule():
+        schedule_start = time.perf_counter()
         schedule_output = original_schedule()
-        schedule_time = time.perf_counter() - benchmark_start
+        schedule_end = time.perf_counter()
+        schedule_observer["schedule_time_ms"] = (
+            schedule_end - schedule_start
+        ) * 1000
+        schedule_time = schedule_end - benchmark_start
         seq_to_request = {
             seq.seq_id: index
             for index, seq in enumerate(sequences)
@@ -380,6 +438,29 @@ def main():
         ]
         schedule_observer["decode_request_ids"] = decode_ids
         schedule_observer["prefill_request_ids"] = prefill_ids
+        schedule_observer["prefill_chunks"] = []
+
+        for seq in schedule_output.prefill_seqs:
+            request_id = seq_to_request.get(seq.seq_id)
+            if request_id is None:
+                continue
+            chunk = {
+                "request_id": request_id,
+                "seq_id": seq.seq_id,
+                "step": schedule_observer["step"],
+                "prompt_tokens": seq.num_prompt_tokens,
+                "cached_tokens_before": seq.num_cached_tokens,
+                "allocated_tokens": seq.num_scheduled_tokens,
+                "cached_tokens_after_schedule": (
+                    seq.num_cached_tokens + seq.num_scheduled_tokens
+                ),
+                "remaining_tokens_before": max(
+                    0, seq.num_prompt_tokens - seq.num_cached_tokens
+                ),
+                "prefill_completed": False,
+            }
+            schedule_observer["prefill_chunks"].append(chunk)
+            prefill_chunk_records.append(chunk)
 
         for request_id in prefill_ids:
             if request_id not in first_prefill_steps:
@@ -389,6 +470,26 @@ def main():
         return schedule_output
 
     engine.scheduler.schedule = observed_schedule
+
+    # CUDA events measure GPU stream time without synchronizing each stage.
+    # This avoids adding a per-call synchronization point to the benchmark.
+    original_model_runner_call = engine.model_runner.call
+
+    def observed_model_runner_call(method_name, *call_args):
+        if method_name not in ("run_decode", "run_prefill"):
+            return original_model_runner_call(method_name, *call_args)
+
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        start_event.record()
+        result = original_model_runner_call(method_name, *call_args)
+        end_event.record()
+        schedule_observer["gpu_events"].append(
+            (method_name, start_event, end_event)
+        )
+        return result
+
+    engine.model_runner.call = observed_model_runner_call
 
     submitted_count = 0
     next_arrival_step = 0
@@ -472,6 +573,9 @@ def main():
         schedule_observer["step"] = step_id
         schedule_observer["decode_request_ids"] = []
         schedule_observer["prefill_request_ids"] = []
+        schedule_observer["prefill_chunks"] = []
+        schedule_observer["schedule_time_ms"] = 0.0
+        schedule_observer["gpu_events"] = []
 
         torch.cuda.synchronize()
         step_start = time.perf_counter()
@@ -482,14 +586,56 @@ def main():
         torch.cuda.synchronize()
         step_end = time.perf_counter()
 
+        # Count steps in which an incomplete Prompt received no Prefill service.
+        selected_prefill_ids = set(schedule_observer["prefill_request_ids"])
+        for request_id, seq in enumerate(sequences):
+            if seq is None or seq.num_cached_tokens >= seq.num_prompt_tokens:
+                prefill_current_wait_steps[request_id] = 0
+                continue
+            if request_id in selected_prefill_ids:
+                prefill_current_wait_steps[request_id] = 0
+            else:
+                prefill_total_wait_steps[request_id] += 1
+                prefill_current_wait_steps[request_id] += 1
+                prefill_max_consecutive_wait_steps[request_id] = max(
+                    prefill_max_consecutive_wait_steps[request_id],
+                    prefill_current_wait_steps[request_id],
+                )
+
+        for chunk in schedule_observer["prefill_chunks"]:
+            request_id = chunk["request_id"]
+            seq = sequences[request_id]
+            chunk["cached_tokens_after"] = seq.num_cached_tokens
+            chunk["prefill_completed"] = (
+                seq.num_cached_tokens >= seq.num_prompt_tokens
+            )
+            if (
+                chunk["prefill_completed"]
+                and request_id not in prefill_completion_steps
+            ):
+                prefill_completion_steps[request_id] = step_id
+                prefill_completion_times[request_id] = (
+                    step_end - benchmark_start
+                )
+
+        stage_gpu_times = {"run_decode": 0.0, "run_prefill": 0.0}
+        for method_name, start_event, end_event in schedule_observer["gpu_events"]:
+            stage_gpu_times[method_name] += start_event.elapsed_time(end_event)
+
         step_records.append({
             "step": step_id,
             "step_time_ms": (step_end - step_start) * 1000,
+            "scheduler_schedule_time_ms": schedule_observer["schedule_time_ms"],
+            "decode_gpu_time_ms": stage_gpu_times["run_decode"],
+            "prefill_gpu_time_ms": stage_gpu_times["run_prefill"],
             "decode_tokens": decode_tokens,
             "prefill_tokens": prefill_tokens,
             "newly_arrived_request_ids": newly_arrived,
             "decode_request_ids": schedule_observer["decode_request_ids"],
             "prefill_request_ids": schedule_observer["prefill_request_ids"],
+            "prefill_chunks": [
+                dict(chunk) for chunk in schedule_observer["prefill_chunks"]
+            ],
             "waiting_queue_size": len(engine.scheduler.waiting),
             "running_queue_size": len(engine.scheduler.running),
         })
@@ -559,6 +705,20 @@ def main():
         else:
             tpot = None
 
+        if i not in prefill_completion_steps or i not in prefill_completion_times:
+            raise RuntimeError(
+                f"Request {i} did not complete Prompt Prefill"
+            )
+
+        request_chunks = [
+            dict(chunk)
+            for chunk in prefill_chunk_records
+            if chunk["request_id"] == i
+        ]
+        prefill_completion_latency_ms = (
+            prefill_completion_times[i] - arrival_times[i]
+        ) * 1000
+
         request_results.append({
             "request_id": i,
             "prompt_tokens": len(prompt_ids[i]),
@@ -570,6 +730,18 @@ def main():
             "first_prefill_schedule_time_ms": first_prefill_times[i] * 1000,
             "prefill_wait_steps": prefill_wait_steps,
             "prefill_queue_wait_ms": max(0.0, prefill_queue_wait_ms),
+            "prefill_chunk_count": len(request_chunks),
+            "prefill_chunks": request_chunks,
+            "prefill_completion_step": prefill_completion_steps[i],
+            "prefill_completion_time_ms": prefill_completion_times[i] * 1000,
+            "prefill_completion_latency_ms": prefill_completion_latency_ms,
+            "prefill_total_wait_steps": prefill_total_wait_steps[i],
+            "prefill_max_consecutive_wait_steps": (
+                prefill_max_consecutive_wait_steps[i]
+            ),
+            "prefill_total_allocated_tokens": sum(
+                chunk["allocated_tokens"] for chunk in request_chunks
+            ),
             "ttft_ms": ttft * 1000,
             "tpot_ms": None if tpot is None else tpot * 1000,
             "request_latency_ms": latency * 1000,
@@ -624,6 +796,25 @@ def main():
                 "selection in a Prefill batch; queue wait time is measured "
                 "at schedule() return, before model execution."
             ),
+            "prefill_total_wait_definition": (
+                "For every Engine step while a request still has uncached "
+                "Prompt tokens, count one wait step if it receives no Prefill "
+                "allocation in that step. This includes initial queueing and "
+                "between-chunk waits; it excludes a step in which it receives "
+                "any Prefill allocation."
+            ),
+            "prefill_completion_definition": (
+                "The first Engine step after which num_cached_tokens reaches "
+                "num_prompt_tokens. Completion time is measured at the end "
+                "of that Engine step, after CUDA synchronization."
+            ),
+            "stage_timing_definition": (
+                "scheduler_schedule_time_ms is CPU wall time spent in "
+                "Scheduler.schedule(). decode_gpu_time_ms and "
+                "prefill_gpu_time_ms are CUDA-event elapsed times around "
+                "ModelRunner run_decode/run_prefill calls; they are not "
+                "per-request timings and exclude CPU-side preparation."
+            ),
             "staggered_initial_requests": (
                 args.staggered_initial_requests
                 if args.scenario == "staggered"
@@ -656,6 +847,14 @@ def main():
             "total_steps": len(step_records),
             "prefill_wait": summarize_wait_metrics(request_results),
             "prefill_wait_by_prompt_length": wait_by_prompt_length,
+            "prefill_fairness": summarize_prefill_fairness(request_results),
+            "prefill_fairness_by_prompt_length": {
+                str(prompt_length): summarize_prefill_fairness([
+                    item for item in request_results
+                    if item["prompt_tokens"] == prompt_length
+                ])
+                for prompt_length in sorted(set(prompt_lengths))
+            },
             "total_prefill_tokens": total_prefill_tokens,
             "total_decode_tokens": total_decode_tokens,
             "initial_allocated_mib": initial_allocated / 1024**2,
