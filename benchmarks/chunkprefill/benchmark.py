@@ -72,6 +72,12 @@ def parse_args():
         help="Comma-separated prompt lengths, cycled across requests.",
     )
     parser.add_argument(
+        "--max-num-decode-seqs",
+        type=int,
+        default=8,
+        help="Maximum Decode sequences scheduled per Engine step.",
+    )
+    parser.add_argument(
         "--max-num-prefill-seqs",
         type=int,
         default=None,
@@ -220,6 +226,8 @@ def main():
 
     if args.num_requests <= 0:
         raise ValueError("--num-requests must be positive")
+    if args.max_num_decode_seqs <= 0:
+        raise ValueError("--max-num-decode-seqs must be positive")
 
     if args.scenario == "staggered":
         if not 1 <= args.staggered_initial_requests <= args.num_requests:
@@ -263,6 +271,7 @@ def main():
     print("Max batched tokens:", max_num_batched_tokens)
     print("Execution mode:", execution_mode)
     print("Eager mode:", enforce_eager)
+    print("Max Decode sequences:", args.max_num_decode_seqs)
     print("Max Prefill sequences:", args.max_num_prefill_seqs)
     if args.scenario == "staggered":
         print(
@@ -287,6 +296,7 @@ def main():
     engine = LLM(
         args.model,
         max_num_seqs=args.num_requests,
+        max_num_decode_seqs=args.max_num_decode_seqs,
         max_num_batched_tokens=max_num_batched_tokens,
         max_model_len=2048,
         gpu_memory_utilization=0.85,
@@ -306,6 +316,13 @@ def main():
     # 清除预热阶段对峰值显存统计的影响
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
+
+    # Exclude warmup activity from ModelRunner diagnostics.
+    for key, value in engine.model_runner.execution_stats.items():
+        if hasattr(value, "clear"):
+            value.clear()
+        else:
+            engine.model_runner.execution_stats[key] = 0
 
     initial_allocated = torch.cuda.memory_allocated()
     initial_reserved = torch.cuda.memory_reserved()
@@ -592,6 +609,7 @@ def main():
             "request_prompt_lengths": prompt_lengths,
             "output_tokens": args.output_tokens,
             "max_num_seqs": args.num_requests,
+            "max_num_decode_seqs": args.max_num_decode_seqs,
             "max_num_batched_tokens": max_num_batched_tokens,
             "max_model_len": 2048,
             "gpu_memory_utilization": 0.85,
