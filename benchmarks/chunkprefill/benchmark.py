@@ -48,6 +48,24 @@ def parse_args():
     )
     parser.add_argument("--num-requests", type=int, default=4)
     parser.add_argument(
+        "--staggered-initial-requests",
+        type=int,
+        default=4,
+        help="Number of requests in the first staggered-arrival batch.",
+    )
+    parser.add_argument(
+        "--staggered-batch-size",
+        type=int,
+        default=4,
+        help="Number of requests in each subsequent staggered-arrival batch.",
+    )
+    parser.add_argument(
+        "--staggered-interval-steps",
+        type=int,
+        default=2,
+        help="Number of Engine steps between staggered-arrival batches.",
+    )
+    parser.add_argument(
         "--prompt-lengths",
         type=parse_prompt_lengths,
         default=[128, 512, 1024],
@@ -172,6 +190,20 @@ def main():
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is not available")
 
+    if args.num_requests <= 0:
+        raise ValueError("--num-requests must be positive")
+
+    if args.scenario == "staggered":
+        if not 1 <= args.staggered_initial_requests <= args.num_requests:
+            raise ValueError(
+                "--staggered-initial-requests must be between 1 and "
+                "--num-requests"
+            )
+        if args.staggered_batch_size <= 0:
+            raise ValueError("--staggered-batch-size must be positive")
+        if args.staggered_interval_steps <= 0:
+            raise ValueError("--staggered-interval-steps must be positive")
+
     if args.scenario == "all_at_once":
         max_num_batched_tokens = 16384
 
@@ -204,6 +236,13 @@ def main():
     print("Execution mode:", execution_mode)
     print("Eager mode:", enforce_eager)
     print("Max Prefill sequences:", args.max_num_prefill_seqs)
+    if args.scenario == "staggered":
+        print(
+            "Staggered arrival:",
+            f"initial={args.staggered_initial_requests},",
+            f"batch_size={args.staggered_batch_size},",
+            f"interval_steps={args.staggered_interval_steps}",
+        )
     
 
     tokenizer = AutoTokenizer.from_pretrained(
@@ -254,6 +293,8 @@ def main():
 
     sequences = [None] * args.num_requests
     arrival_times = [None] * args.num_requests
+    arrival_steps = [None] * args.num_requests
+    arrival_batch_ids = [None] * args.num_requests
     first_token_times = [None] * args.num_requests
     finish_times = [None] * args.num_requests
 
@@ -262,32 +303,85 @@ def main():
     torch.cuda.synchronize()
     benchmark_start = time.perf_counter()
 
+    submitted_count = 0
+    next_arrival_step = 0
+    arrival_batch_id = 0
+
     if args.scenario in ("all_at_once", "stress"):
         # all_at_once 和 stress：一次性提交所有请求
+        indices = range(args.num_requests)
         add_requests(
             engine,
             sequences,
             arrival_times,
             prompt_ids,
-            range(args.num_requests),
+            indices,
             sampling_params,
             benchmark_start,
         )
+        for i in indices:
+            arrival_steps[i] = 0
+            arrival_batch_ids[i] = 0
+        submitted_count = args.num_requests
     else:
-        # staggered：先提交第一个请求
-        add_requests(
-            engine,
-            sequences,
-            arrival_times,
-            prompt_ids,
-            [0],
-            sampling_params,
-            benchmark_start,
+        print(
+            "Staggered arrival plan:",
+            f"first batch={args.staggered_initial_requests},",
+            f"later batch size={args.staggered_batch_size},",
+            f"every {args.staggered_interval_steps} Engine steps",
         )
 
     step_id = 0
 
-    while not engine.scheduler.is_finished():
+    # 对 staggered 而言，即使当前队列暂时为空，只要还有未提交请求，
+    # benchmark 就继续，并在下一次循环提交下一批请求。
+    while (
+        submitted_count < args.num_requests
+        or not engine.scheduler.is_finished()
+    ):
+        newly_arrived = []
+
+        if args.scenario == "staggered":
+            should_arrive = (
+                submitted_count < args.num_requests
+                and (
+                    step_id >= next_arrival_step
+                    or engine.scheduler.is_finished()
+                )
+            )
+
+            if should_arrive:
+                if arrival_batch_id == 0:
+                    batch_size = args.staggered_initial_requests
+                else:
+                    batch_size = args.staggered_batch_size
+
+                batch_end = min(
+                    submitted_count + batch_size,
+                    args.num_requests,
+                )
+                newly_arrived = list(range(submitted_count, batch_end))
+
+                add_requests(
+                    engine,
+                    sequences,
+                    arrival_times,
+                    prompt_ids,
+                    newly_arrived,
+                    sampling_params,
+                    benchmark_start,
+                )
+
+                for i in newly_arrived:
+                    arrival_steps[i] = step_id
+                    arrival_batch_ids[i] = arrival_batch_id
+
+                submitted_count = batch_end
+                arrival_batch_id += 1
+                next_arrival_step = (
+                    step_id + args.staggered_interval_steps
+                )
+
         torch.cuda.synchronize()
         step_start = time.perf_counter()
 
@@ -301,6 +395,9 @@ def main():
             "step_time_ms": (step_end - step_start) * 1000,
             "decode_tokens": decode_tokens,
             "prefill_tokens": prefill_tokens,
+            "newly_arrived_request_ids": newly_arrived,
+            "waiting_queue_size": len(engine.scheduler.waiting),
+            "running_queue_size": len(engine.scheduler.running),
         })
 
         # 记录首 Token 时间和请求完成时间
@@ -316,18 +413,6 @@ def main():
 
             if seq.is_finished and finish_times[i] is None:
                 finish_times[i] = step_end - benchmark_start
-
-        # 第一次 Engine Step 结束后，再提交剩余请求
-        if args.scenario == "staggered" and step_id == 0:
-            add_requests(
-                engine,
-                sequences,
-                arrival_times,
-                prompt_ids,
-                range(1, args.num_requests),
-                sampling_params,
-                benchmark_start,
-            )
 
         step_id += 1
 
@@ -371,6 +456,8 @@ def main():
             "prompt_tokens": len(prompt_ids[i]),
             "output_tokens": completion_tokens,
             "arrival_time_ms": arrival_times[i] * 1000,
+            "arrival_step": arrival_steps[i],
+            "arrival_batch_id": arrival_batch_ids[i],
             "ttft_ms": ttft * 1000,
             "tpot_ms": None if tpot is None else tpot * 1000,
             "request_latency_ms": latency * 1000,
@@ -409,6 +496,21 @@ def main():
             "seed": args.seed,
             "max_num_prefill_seqs": args.max_num_prefill_seqs,
             "enable_prefill_aging": args.enable_prefill_aging,
+            "staggered_initial_requests": (
+                args.staggered_initial_requests
+                if args.scenario == "staggered"
+                else None
+            ),
+            "staggered_batch_size": (
+                args.staggered_batch_size
+                if args.scenario == "staggered"
+                else None
+            ),
+            "staggered_interval_steps": (
+                args.staggered_interval_steps
+                if args.scenario == "staggered"
+                else None
+            ),
         },
         "summary": {
             "total_time_ms": total_time * 1000,
