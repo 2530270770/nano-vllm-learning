@@ -471,25 +471,23 @@ def main():
 
     engine.scheduler.schedule = observed_schedule
 
-    # CUDA events measure GPU stream time without synchronizing each stage.
-    # This avoids adding a per-call synchronization point to the benchmark.
-    original_model_runner_call = engine.model_runner.call
+    # CUDA events measure model-forward GPU stream time without synchronizing
+    # each stage. Tensor preparation and sampling remain outside this interval.
+    original_run_model = engine.model_runner.run_model
 
-    def observed_model_runner_call(method_name, *call_args):
-        if method_name not in ("run_decode", "run_prefill"):
-            return original_model_runner_call(method_name, *call_args)
-
+    def observed_run_model(input_ids, positions, is_prefill):
+        stage_name = "prefill_forward" if is_prefill else "decode_forward"
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
         start_event.record()
-        result = original_model_runner_call(method_name, *call_args)
+        result = original_run_model(input_ids, positions, is_prefill)
         end_event.record()
         schedule_observer["gpu_events"].append(
-            (method_name, start_event, end_event)
+            (stage_name, start_event, end_event)
         )
         return result
 
-    engine.model_runner.call = observed_model_runner_call
+    engine.model_runner.run_model = observed_run_model
 
     submitted_count = 0
     next_arrival_step = 0
@@ -618,7 +616,7 @@ def main():
                     step_end - benchmark_start
                 )
 
-        stage_gpu_times = {"run_decode": 0.0, "run_prefill": 0.0}
+        stage_gpu_times = {"decode_forward": 0.0, "prefill_forward": 0.0}
         for method_name, start_event, end_event in schedule_observer["gpu_events"]:
             stage_gpu_times[method_name] += start_event.elapsed_time(end_event)
 
@@ -626,8 +624,8 @@ def main():
             "step": step_id,
             "step_time_ms": (step_end - step_start) * 1000,
             "scheduler_schedule_time_ms": schedule_observer["schedule_time_ms"],
-            "decode_gpu_time_ms": stage_gpu_times["run_decode"],
-            "prefill_gpu_time_ms": stage_gpu_times["run_prefill"],
+            "decode_forward_gpu_time_ms": stage_gpu_times["decode_forward"],
+            "prefill_forward_gpu_time_ms": stage_gpu_times["prefill_forward"],
             "decode_tokens": decode_tokens,
             "prefill_tokens": prefill_tokens,
             "newly_arrived_request_ids": newly_arrived,
@@ -810,10 +808,11 @@ def main():
             ),
             "stage_timing_definition": (
                 "scheduler_schedule_time_ms is CPU wall time spent in "
-                "Scheduler.schedule(). decode_gpu_time_ms and "
-                "prefill_gpu_time_ms are CUDA-event elapsed times around "
-                "ModelRunner run_decode/run_prefill calls; they are not "
-                "per-request timings and exclude CPU-side preparation."
+                "Scheduler.schedule(). decode_forward_gpu_time_ms and "
+                "prefill_forward_gpu_time_ms are CUDA-event elapsed times "
+                "around ModelRunner.run_model; they cover model forward and "
+                "logit computation, not tensor preparation or sampling, and "
+                "are not per-request timings."
             ),
             "staggered_initial_requests": (
                 args.staggered_initial_requests
