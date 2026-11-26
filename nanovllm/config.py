@@ -23,6 +23,7 @@ class Config:
     def __post_init__(self):
         assert os.path.isdir(self.model)
         assert self.max_num_decode_seqs > 0
+        assert self.max_num_decode_seqs <= self.max_num_batched_tokens
 
         if self.max_num_prefill_seqs is not None:
             assert self.max_num_prefill_seqs > 0

@@ -28,6 +28,8 @@ class Sequence:
 
         # Prefill Aging：累计等待 Prefill 调度的轮数
         self.prefill_wait_steps = 0
+        # Monotonic fairness metric; unlike prefill_wait_steps this is never reset.
+        self.prefill_total_wait_steps = 0
 
         self.block_table = []
         self.temperature = sampling_params.temperature
@@ -84,6 +86,7 @@ class Sequence:
             self.block_table,
             last_state,
             self.prefill_wait_steps,
+            self.prefill_total_wait_steps,
         )
 
     def __setstate__(self, state):
@@ -98,6 +101,7 @@ class Sequence:
         ) = state
 
         self.prefill_wait_steps = extra[0] if extra else 0
+        self.prefill_total_wait_steps = extra[1] if len(extra) > 1 else self.prefill_wait_steps
 
         if isinstance(last_state, list):
             self.token_ids = last_state

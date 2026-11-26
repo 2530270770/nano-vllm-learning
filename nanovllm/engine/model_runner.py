@@ -1,4 +1,6 @@
 import pickle
+from collections import Counter
+from time import perf_counter
 import torch
 import torch.distributed as dist
 from multiprocessing.synchronize import Event
@@ -22,6 +24,19 @@ class ModelRunner:
         self.world_size = config.tensor_parallel_size
         self.rank = rank
         self.event = event
+        self.execution_stats = {
+            "decode_calls": 0,
+            "decode_graph_calls": 0,
+            "decode_eager_calls": 0,
+            "prefill_calls": 0,
+            "decode_batch_sizes": Counter(),
+            "decode_graph_sizes": Counter(),
+            "decode_graph_fallback_reasons": Counter(),
+            "decode_prepare_time_ms": 0.0,
+            "decode_model_time_ms": 0.0,
+            "prefill_prepare_time_ms": 0.0,
+            "prefill_model_time_ms": 0.0,
+        }
 
         dist.init_process_group("nccl", "tcp://localhost:2333", world_size=self.world_size, rank=rank)
         torch.cuda.set_device(rank)
@@ -194,12 +209,26 @@ class ModelRunner:
 
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool):
-        if is_prefill or self.enforce_eager or input_ids.size(0) > 512:
+        if is_prefill:
+            self.execution_stats["prefill_calls"] += 1
+            return self.model.compute_logits(self.model(input_ids, positions))
+        bs = input_ids.size(0)
+        self.execution_stats["decode_calls"] += 1
+        self.execution_stats["decode_batch_sizes"][bs] += 1
+        if self.enforce_eager:
+            self.execution_stats["decode_eager_calls"] += 1
+            self.execution_stats["decode_graph_fallback_reasons"]["enforce_eager"] += 1
+            return self.model.compute_logits(self.model(input_ids, positions))
+        if bs > 512:
+            self.execution_stats["decode_eager_calls"] += 1
+            self.execution_stats["decode_graph_fallback_reasons"]["batch_size_gt_512"] += 1
             return self.model.compute_logits(self.model(input_ids, positions))
         else:
-            bs = input_ids.size(0)
+            graph_bs = next(x for x in self.graph_bs if x >= bs)
+            self.execution_stats["decode_graph_calls"] += 1
+            self.execution_stats["decode_graph_sizes"][graph_bs] += 1
             context = get_context()
-            graph = self.graphs[next(x for x in self.graph_bs if x >= bs)]
+            graph = self.graphs[graph_bs]
             graph_vars = self.graph_vars
             graph_vars["input_ids"][:bs] = input_ids
             graph_vars["positions"][:bs] = positions

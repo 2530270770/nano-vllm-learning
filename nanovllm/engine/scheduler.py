@@ -33,6 +33,10 @@ class Scheduler:
             "enable_prefill_aging",
             False,
         )
+        self.schedule_step = 0
+        self.last_schedule_stats = {}
+        self.total_kv_allocation_failures = 0
+        self.total_decode_preemptions = 0
 
     def is_finished(self):
         return not self.waiting and not self.running
@@ -43,6 +47,12 @@ class Scheduler:
     def schedule(self) -> ScheduleOutput:
         decode_seqs = []
         prefill_seqs = []
+        step_id = self.schedule_step
+        self.schedule_step += 1
+        waiting_at_start = len(self.waiting)
+        running_at_start = len(self.running)
+        kv_allocation_failures = []
+        decode_preemptions_before = self.total_decode_preemptions
 
         # ==================================================
         # 1. Decode Scheduling
@@ -132,6 +142,7 @@ class Scheduler:
             if self.enable_prefill_aging:
                 # 每经过一轮调度，等待中的请求年龄增加
                 seq.prefill_wait_steps += 1
+                seq.prefill_total_wait_steps += 1
 
             waiting_candidates.append(seq)
 
@@ -170,6 +181,8 @@ class Scheduler:
                 # KV Cache 不足：
                 # 跳过当前请求，继续检查后面的请求
                 if num_cached_blocks == -1:
+                    kv_allocation_failures.append(seq.seq_id)
+                    self.total_kv_allocation_failures += 1
                     self.waiting.append(seq)
                     continue
 
@@ -293,6 +306,38 @@ class Scheduler:
             for seq in prefill_seqs
         )
 
+        allocated_tokens = decode_tokens + prefill_tokens
+        free_blocks = len(self.block_manager.free_block_ids)
+        total_blocks = len(self.block_manager.blocks)
+        self.last_schedule_stats = {
+            "step": step_id,
+            "decode_limit": max_decode_seqs,
+            "decode_count": len(decode_seqs),
+            "decode_tokens": decode_tokens,
+            "prefill_limit": max_prefill_seqs,
+            "prefill_candidates": len(candidates),
+            "prefill_candidate_seq_ids": [seq.seq_id for seq, _ in candidates],
+            "prefill_demands": [demand for _, demand in candidates],
+            "prefill_allocations": [seq.num_scheduled_tokens for seq in prefill_seqs],
+            "prefill_seq_ids": [seq.seq_id for seq in prefill_seqs],
+            "prefill_tokens": prefill_tokens,
+            "token_budget": self.max_num_batched_tokens,
+            "used_tokens": allocated_tokens,
+            "unused_tokens": self.max_num_batched_tokens - allocated_tokens,
+            "budget_utilization": allocated_tokens / self.max_num_batched_tokens,
+            "kv_allocation_failures": kv_allocation_failures,
+            "total_kv_allocation_failures": self.total_kv_allocation_failures,
+            "free_kv_blocks": free_blocks,
+            "used_kv_blocks": total_blocks - free_blocks,
+            "total_kv_blocks": total_blocks,
+            "waiting_at_start": waiting_at_start,
+            "running_at_start": running_at_start,
+            "waiting_at_end": len(self.waiting),
+            "running_at_end": len(self.running),
+            "decode_preemptions": self.total_decode_preemptions - decode_preemptions_before,
+            "total_decode_preemptions": self.total_decode_preemptions,
+        }
+
         return ScheduleOutput(
             decode_seqs=decode_seqs,
             prefill_seqs=prefill_seqs,
@@ -302,6 +347,7 @@ class Scheduler:
 
 
     def preempt(self, seq: Sequence):
+        self.total_decode_preemptions += 1
         seq.status = SequenceStatus.WAITING
         seq.is_prefill = True
         self.block_manager.deallocate(seq)
