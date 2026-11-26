@@ -1,6 +1,5 @@
 import pickle
 from collections import Counter
-from time import perf_counter
 import torch
 import torch.distributed as dist
 from multiprocessing.synchronize import Event
@@ -29,13 +28,10 @@ class ModelRunner:
             "decode_graph_calls": 0,
             "decode_eager_calls": 0,
             "prefill_calls": 0,
+            "prefill_tokens": 0,
             "decode_batch_sizes": Counter(),
             "decode_graph_sizes": Counter(),
             "decode_graph_fallback_reasons": Counter(),
-            "decode_prepare_time_ms": 0.0,
-            "decode_model_time_ms": 0.0,
-            "prefill_prepare_time_ms": 0.0,
-            "prefill_model_time_ms": 0.0,
         }
 
         dist.init_process_group("nccl", "tcp://localhost:2333", world_size=self.world_size, rank=rank)
@@ -211,6 +207,7 @@ class ModelRunner:
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool):
         if is_prefill:
             self.execution_stats["prefill_calls"] += 1
+            self.execution_stats["prefill_tokens"] = self.execution_stats.get("prefill_tokens", 0) + input_ids.numel()
             return self.model.compute_logits(self.model(input_ids, positions))
         bs = input_ids.size(0)
         self.execution_stats["decode_calls"] += 1

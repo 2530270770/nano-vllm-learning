@@ -602,3 +602,49 @@ def test_prefill_aging_disabled_preserves_fifo():
     assert older_seq.prefill_wait_steps == 5
 
     assert list(scheduler.waiting) == [older_seq]
+
+
+def test_prefill_total_wait_is_monotonic_and_independent_of_aging():
+    """累计排队等待始终记录，且不会随一次 Prefill 服务清零。"""
+    scheduler = make_scheduler(
+        max_num_seqs=2,
+        max_num_batched_tokens=8,
+        num_kvcache_blocks=4,
+        max_num_prefill_seqs=1,
+        enable_prefill_aging=False,
+    )
+    first = make_seq(4)
+    second = make_seq(4)
+    scheduler.add(first)
+    scheduler.add(second)
+
+    output1 = scheduler.schedule()
+    assert output1.prefill_seqs == [first]
+    assert first.prefill_total_wait_steps == 0
+    assert second.prefill_total_wait_steps == 1
+
+    scheduler.postprocess(output1.prefill_seqs, [999], is_prefill=True)
+    output2 = scheduler.schedule()
+    assert output2.prefill_seqs == [second]
+    assert second.prefill_total_wait_steps == 1
+
+
+def test_scheduler_exports_waterfill_and_kv_diagnostics():
+    scheduler = make_scheduler(
+        max_num_seqs=2,
+        max_num_batched_tokens=10,
+        num_kvcache_blocks=2,
+    )
+    seqs = [make_seq(20), make_seq(20)]
+    for seq in seqs:
+        scheduler.add(seq)
+
+    output = scheduler.schedule()
+    stats = scheduler.last_schedule_stats
+    assert output.prefill_tokens == 10
+    assert stats["used_tokens"] == 10
+    assert stats["unused_tokens"] == 0
+    assert stats["budget_utilization"] == 1.0
+    assert stats["prefill_allocations"] == [5, 5]
+    assert stats["water_level"] == 5
+    assert stats["free_kv_blocks"] == 0

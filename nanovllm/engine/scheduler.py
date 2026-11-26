@@ -209,6 +209,7 @@ class Scheduler:
         # 4. Integer Water-filling
         # ==================================================
 
+        water_level = 0
         if candidates and remaining_tokens > 0:
 
             demands = [
@@ -321,6 +322,7 @@ class Scheduler:
             "prefill_candidates": len(candidates),
             "prefill_candidate_seq_ids": [seq.seq_id for seq, _ in candidates],
             "prefill_demands": [demand for _, demand in candidates],
+            "water_level": water_level,
             "prefill_allocations": [seq.num_scheduled_tokens for seq in prefill_seqs],
             "prefill_seq_ids": [seq.seq_id for seq in prefill_seqs],
             "prefill_total_wait_steps": [seq.prefill_total_wait_steps for seq in prefill_seqs],

@@ -673,8 +673,15 @@ def main():
         "steps": step_records,
         "scheduler_steps": scheduler_step_records,
         "model_runner_stats": {
-            key: (dict(value) if hasattr(value, "items") else value)
-            for key, value in engine.model_runner.execution_stats.items()
+            **{
+                key: (dict(value) if hasattr(value, "items") else value)
+                for key, value in engine.model_runner.execution_stats.items()
+            },
+            "decode_graph_hit_rate": (
+                engine.model_runner.execution_stats["decode_graph_calls"]
+                / engine.model_runner.execution_stats["decode_calls"]
+                if engine.model_runner.execution_stats["decode_calls"] else None
+            ),
         },
     }
 
