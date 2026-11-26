@@ -34,6 +34,12 @@ def parse_args():
         "--output",
         default=None,
     )
+    parser.add_argument(
+    "--execution-mode",
+    choices=["auto", "eager", "cudagraph"],
+    default="auto",
+    help="Execution mode: auto follows variant, eager disables CUDA Graph, cudagraph enables it.",
+)
     return parser.parse_args()
 
 
@@ -118,7 +124,14 @@ def warmup(engine, tokenizer):
 def main():
     args = parse_args()
 
-    enforce_eager = (args.variant == "baseline")
+    if args.execution_mode == "auto":
+        enforce_eager = (args.variant == "baseline")
+    elif args.execution_mode == "eager":
+        enforce_eager = True
+    else:
+        enforce_eager = False
+
+    execution_mode = "eager" if enforce_eager else "cudagraph"
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is not available")
@@ -145,6 +158,7 @@ def main():
     print("Prompt tokens:", prompt_len)
     print("Output tokens:", args.output_tokens)
     print("Max batched tokens:", max_num_batched_tokens)
+    print("Execution mode:", execution_mode)
     print("Eager mode:", enforce_eager)
 
     tokenizer = AutoTokenizer.from_pretrained(
@@ -342,6 +356,7 @@ def main():
             "max_model_len": 1024,
             "gpu_memory_utilization": 0.85,
             "enforce_eager": enforce_eager,
+            "execution_mode": execution_mode,
             "temperature": 1.0,
             "seed": args.seed,
         },

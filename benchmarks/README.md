@@ -409,3 +409,126 @@ Optimized（Eager Prefill + CUDA Graph Decode）：
 
 后续还需要关注 Decode 优先策略下的 Prefill 等待时间，探索 Decode 并发限制、Prefill 公平性和 Token Budget 分配之间的平衡。
 
+### 10. CUDA Graph Ablation：Scheduler 与执行模式消融实验
+
+#### 10.1 实验目的
+
+为了区分多请求 Chunked Prefill 调度优化和 CUDA Graph 对推理性能的独立贡献，设计三组对照实验。
+
+| 组别 | Scheduler | Prefill | Decode |
+|---|---|---|---|
+| A：Baseline | 原始调度 | Eager | Eager |
+| B：Optimized-Eager | 优化调度 | Eager | Eager |
+| C：Optimized-Graph | 优化调度 | Eager | CUDA Graph |
+
+其中，B 组通过 `--execution-mode eager` 强制关闭 CUDA Graph，但保留 Optimized Scheduler。
+
+#### 10.2 测试配置
+
+| 项目 | 配置 |
+|---|---|
+| Model | Qwen3-0.6B |
+| Requests | 16 |
+| Prompt Tokens | 512 |
+| Output Tokens | 8 |
+| Max Batched Tokens | 512 |
+| Seed | 42 |
+| Runs | 每组 5 轮 |
+| Scenario | Stress |
+
+#### 10.3 B 组原始结果：Optimized Scheduler + Eager
+
+| Run | Total Time (ms) | Throughput (tok/s) | TTFT (ms) | TPOT (ms) | Request Latency (ms) |
+|---|---:|---:|---:|---:|---:|
+| 1 | 1798.85 | 71.16 | 1265.36 | 57.25 | 1666.09 |
+| 2 | 1836.72 | 69.69 | 1258.99 | 63.39 | 1702.71 |
+| 3 | 1782.68 | 71.80 | 1252.90 | 56.42 | 1647.84 |
+| 4 | 1831.80 | 69.88 | 1246.64 | 61.30 | 1675.71 |
+| 5 | 1843.94 | 69.42 | 1272.88 | 62.49 | 1710.32 |
+
+B 组中位数：
+
+| 指标 | Median |
+|---|---:|
+| Total Time | 1831.80 ms |
+| Throughput | 69.88 tok/s |
+| TTFT | 1258.99 ms |
+| TPOT | 61.30 ms |
+| Request Latency | 1675.71 ms |
+| Engine Steps | 30 |
+
+显存：
+
+| 指标 | B 组 |
+|---|---:|
+| Peak Allocated | 4092.03 MiB |
+| Peak Reserved | 4152 MiB |
+
+#### 10.4 三组实验结果对比
+
+以下均采用五轮实验的中位数：
+
+| 指标 | A：Baseline Eager | B：Optimized Eager | C：Optimized Graph |
+|---|---:|---:|---:|
+| Total Time (ms) | 1741.31 | 1831.80 | 1541.48 |
+| Throughput (tok/s) | 73.51 | 69.88 | 83.04 |
+| TTFT (ms) | 658.11 | 1258.99 | 1338.26 |
+| TPOT (ms) | 153.16 | 61.30 | 21.02 |
+| Request Latency (ms) | 1741.25 | 1675.71 | 1494.38 |
+
+#### 10.5 消融分析
+
+**A vs B：Scheduler 优化的影响**
+
+| 指标 | B 相比 A |
+|---|---:|
+| Total Time | +5.20% |
+| Throughput | -4.94% |
+| TTFT | +91.27% |
+| TPOT | -59.97% |
+| Request Latency | -3.76% |
+
+在不使用 CUDA Graph 的情况下，Optimized Scheduler 已经将 TPOT 从 153.16ms 降低到 61.30ms，下降约 59.97%。
+
+这说明 Decode 优先混合调度本身能够显著改善 Decode 延迟。
+
+但同时，TTFT 增加约 91.27%，吞吐量下降约 4.94%，说明当前调度策略存在 Prefill 等待代价，单独的 Scheduler 优化尚未带来整体吞吐量提升。
+
+**B vs C：CUDA Graph 的额外贡献**
+
+| 指标 | C 相比 B |
+|---|---:|
+| Total Time | -15.85% |
+| Throughput | +18.83% |
+| TTFT | +6.30% |
+| TPOT | -65.71% |
+| Request Latency | -10.82% |
+
+在相同 Optimized Scheduler 下，启用 CUDA Graph 后，TPOT 从 61.30ms 进一步降低到 21.02ms，下降约 65.71%。
+
+同时，吞吐量提高约 18.83%，总耗时降低约 15.85%。
+
+这说明 CUDA Graph 对 Decode 执行效率有额外贡献，但没有解决 Prefill 等待问题。
+
+**A vs C：最终组合优化效果**
+
+| 指标 | C 相比 A |
+|---|---:|
+| Total Time | -11.48% |
+| Throughput | +12.96% |
+| TTFT | +103.35% |
+| TPOT | -86.28% |
+| Request Latency | -14.18% |
+
+#### 10.6 阶段性结论
+
+本次消融实验将 Scheduler 和 CUDA Graph 的影响进行了拆分：
+
+1. Optimized Scheduler 在 Eager 模式下已经能够显著降低 TPOT，说明 Decode 优先混合调度对 Decode 延迟有独立贡献。
+2. CUDA Graph 在相同 Scheduler 下进一步降低 TPOT，并提升整体吞吐量，说明其具有额外的执行效率收益。
+3. 当前 Decode 优先策略会增加 Prefill 等待时间，TTFT 是组合优化中最明显的性能短板。
+4. CUDA Graph 主要改善 Decode 执行效率，并不能直接解决 Prefill 调度公平性问题。
+
+**总体结论：** Scheduler 优化主要改善 Decode 调度延迟，CUDA Graph 主要改善 Decode 执行效率。二者组合后提高了吞吐量并降低了 TPOT，但仍需要进一步优化 Prefill 等待时间。
+
+
