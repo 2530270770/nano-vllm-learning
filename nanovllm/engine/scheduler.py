@@ -282,6 +282,8 @@ class Scheduler:
 
                 # 请求已经获得本轮 Prefill 调度机会
                 seq.prefill_wait_steps = 0
+                # A request selected in this step did not spend this step queued.
+                seq.prefill_total_wait_steps = max(0, seq.prefill_total_wait_steps - 1)
 
                 prefill_seqs.append(seq)
 
