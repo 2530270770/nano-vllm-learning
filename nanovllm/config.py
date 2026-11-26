@@ -17,10 +17,15 @@ class Config:
     kvcache_block_size: int = 256
     num_kvcache_blocks: int = -1
     max_num_decode_seqs: int = 8  # Decode Batch 独立上限
+    max_num_prefill_seqs: int | None = None  # Prefill 并发上限，None 表示不限制
 
     def __post_init__(self):
         assert os.path.isdir(self.model)
         assert self.max_num_decode_seqs > 0
+
+        if self.max_num_prefill_seqs is not None:
+            assert self.max_num_prefill_seqs > 0
+            
         assert self.kvcache_block_size % 256 == 0
         assert 1 <= self.tensor_parallel_size <= 8
         self.hf_config = AutoConfig.from_pretrained(self.model)

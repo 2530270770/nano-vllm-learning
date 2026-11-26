@@ -11,6 +11,7 @@ def make_scheduler(
     max_num_decode_seqs=8,
     max_num_batched_tokens=1024,
     num_kvcache_blocks=32,
+    max_num_prefill_seqs=None,
 ):
     """创建不依赖真实模型和 GPU 的 Scheduler。"""
     config = SimpleNamespace(
@@ -20,6 +21,7 @@ def make_scheduler(
         eos=-1,
         kvcache_block_size=256,
         num_kvcache_blocks=num_kvcache_blocks,
+        max_num_prefill_seqs=max_num_prefill_seqs,
     )
     return Scheduler(config)
 
@@ -470,3 +472,68 @@ def test_prefill_respects_remaining_slots_and_keeps_waiting_requests():
         seq.status == SequenceStatus.WAITING
         for seq in prefill_seqs
     )
+
+def test_prefill_respects_concurrency_limit():
+    """Prefill 每轮只能调度指定数量的请求。"""
+    scheduler = make_scheduler(
+        max_num_seqs=8,
+        max_num_batched_tokens=100,
+        num_kvcache_blocks=8,
+        max_num_prefill_seqs=2,
+    )
+
+    seqs = [make_seq(20) for _ in range(4)]
+
+    for seq in seqs:
+        scheduler.add(seq)
+
+    output = scheduler.schedule()
+
+    # 本轮最多调度两个 Prefill 请求。
+    assert output.prefill_seqs == seqs[:2]
+    assert len(output.prefill_seqs) == 2
+
+    # 两个请求都完成了 Prefill。
+    assert all(
+        seq.status == SequenceStatus.RUNNING
+        for seq in seqs[:2]
+    )
+
+    # 另外两个请求仍然在 Waiting 队列中。
+    assert list(scheduler.waiting) == seqs[2:]
+
+
+def test_prefill_concurrency_limit_with_decode():
+    """Prefill 并发上限不能影响 Decode 优先级。"""
+    scheduler = make_scheduler(
+        max_num_seqs=4,
+        max_num_decode_seqs=1,
+        max_num_batched_tokens=64,
+        num_kvcache_blocks=8,
+        max_num_prefill_seqs=1,
+    )
+
+    decode_seq = make_seq(20)
+    add_running_seq(scheduler, decode_seq)
+
+    prefill_seqs = [
+        make_seq(20),
+        make_seq(20),
+        make_seq(20),
+    ]
+
+    for seq in prefill_seqs:
+        scheduler.add(seq)
+
+    output = scheduler.schedule()
+
+    # Decode 仍然优先。
+    assert output.decode_seqs == [decode_seq]
+    assert output.decode_tokens == 1
+
+    # Prefill 只能调度一个请求。
+    assert output.prefill_seqs == [prefill_seqs[0]]
+    assert output.prefill_tokens == 20
+
+    # 其余 Prefill 请求仍然保留在 Waiting 队列。
+    assert list(scheduler.waiting) == prefill_seqs[1:]

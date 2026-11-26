@@ -28,6 +28,12 @@ def parse_args():
         default="/home/chen17/huggingface/Qwen3-0.6B",
     )
     parser.add_argument("--num-requests", type=int, default=4)
+    parser.add_argument(
+        "--max-num-prefill-seqs",
+        type=int,
+        default=None,
+        help="Maximum number of Prefill requests scheduled per step. None means unlimited.",
+    )
     parser.add_argument("--output-tokens", type=int, default=64)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
@@ -160,6 +166,7 @@ def main():
     print("Max batched tokens:", max_num_batched_tokens)
     print("Execution mode:", execution_mode)
     print("Eager mode:", enforce_eager)
+    print("Max Prefill sequences:", args.max_num_prefill_seqs)
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.model,
@@ -180,6 +187,7 @@ def main():
         gpu_memory_utilization=0.85,
         tensor_parallel_size=1,
         enforce_eager=enforce_eager,
+        max_num_prefill_seqs=args.max_num_prefill_seqs,
     )
 
     print("\nWarming up...")
@@ -359,6 +367,7 @@ def main():
             "execution_mode": execution_mode,
             "temperature": 1.0,
             "seed": args.seed,
+            "max_num_prefill_seqs": args.max_num_prefill_seqs,
         },
         "summary": {
             "total_time_ms": total_time * 1000,

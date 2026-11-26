@@ -16,6 +16,11 @@ class Scheduler:
     def __init__(self, config: Config):
         self.max_num_seqs = config.max_num_seqs
         self.max_num_decode_seqs = config.max_num_decode_seqs
+        self.max_num_prefill_seqs = getattr(
+            config,
+            "max_num_prefill_seqs",
+            None,
+        )
         self.max_num_batched_tokens = config.max_num_batched_tokens
         self.eos = config.eos
         self.block_size = config.kvcache_block_size
@@ -93,6 +98,12 @@ class Scheduler:
             available_slots,
             remaining_tokens,
         )
+
+        if self.max_num_prefill_seqs is not None:
+            max_prefill_seqs = min(
+                max_prefill_seqs,
+                self.max_num_prefill_seqs,
+            )
 
         # ==================================================
         # 3. Collect Prefill Candidates
