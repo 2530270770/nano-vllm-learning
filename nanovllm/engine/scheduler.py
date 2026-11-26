@@ -152,12 +152,11 @@ class Scheduler:
         # ----------------------------------------------
 
         if self.enable_prefill_aging:
-            # 等待时间越长，越优先获得 Prefill 调度名额
-            #
-            # Python 排序是稳定排序：
-            # 等待时间相同时，保留原来的队列顺序。
+            # 使用单调累计等待时间，而不是每次获得 Chunk 服务后清零的连续年龄。
+            # 长 Prompt 不会因为刚完成一个 Chunk 就丢失此前积累的等待优先级。
+            # Python 排序稳定：累计等待相同时保留 FIFO 顺序。
             waiting_candidates.sort(
-                key=lambda seq: seq.prefill_wait_steps,
+                key=lambda seq: seq.prefill_total_wait_steps,
                 reverse=True,
             )
 

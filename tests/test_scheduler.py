@@ -558,12 +558,12 @@ def test_prefill_aging_prioritizes_older_request():
     scheduler.add(older_seq)
 
     # 模拟老请求已经等待了更多轮。
-    older_seq.prefill_wait_steps = 5
+    older_seq.prefill_total_wait_steps = 5
 
     output = scheduler.schedule()
 
     # 虽然 newer_seq 在队列前面，
-    # 但 older_seq 等待时间更长，应该先被调度。
+    # 但 older_seq 累计等待时间更长，应该先被调度。
     assert output.prefill_seqs == [older_seq]
 
     assert older_seq.prefill_wait_steps == 0
@@ -591,7 +591,7 @@ def test_prefill_aging_disabled_preserves_fifo():
     scheduler.add(newer_seq)
     scheduler.add(older_seq)
 
-    older_seq.prefill_wait_steps = 5
+    older_seq.prefill_total_wait_steps = 5
 
     output = scheduler.schedule()
 
@@ -599,7 +599,7 @@ def test_prefill_aging_disabled_preserves_fifo():
     assert output.prefill_seqs == [newer_seq]
 
     # 关闭 Aging 不会修改等待计数。
-    assert older_seq.prefill_wait_steps == 5
+    assert older_seq.prefill_total_wait_steps == 5
 
     assert list(scheduler.waiting) == [older_seq]
 
