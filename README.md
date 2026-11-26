@@ -2,7 +2,7 @@
 
 > 分支：`chunkprefill`\
 > 仓库：[`2530270770/nano-vllm-learning`](https://github.com/2530270770/nano-vllm-learning/tree/chunkprefill)\
-> 当前评估日期：2026-11-25\
+> 当前评估日期：2026-11-26\
 > 模型：Qwen3-0.6B\
 > 测试环境：WSL Ubuntu、PyTorch 2.6.0+cu124、CUDA 12.4、RTX 3060 Laptop
 > 6GB\
@@ -596,3 +596,139 @@ JSON 文件在本地归档；如果文件名与上述目录不同，以实际生
 
 等 256 并发、Chunk Size=1024
 的正式实验确实达到目标后，再将目标指标替换为实测成果。
+
+------------------------------------------------------------------------
+
+## 10. Decode 并发上限 Sweep（2026-11-26）
+
+本节记录在多请求错峰到达负载下，对 `max_num_decode_seqs` 进行的 5 轮重复实验。该实验用于评估 Decode 并发上限对整体吞吐、请求延迟以及不同 Prompt 长度请求的影响。
+
+### 10.1 实验配置
+
+| 参数 | 配置 |
+|---|---:|
+| 模型 | Qwen3-0.6B |
+| 请求数 | 32 |
+| Prompt 长度分布 | 128 × 11、512 × 11、1024 × 10 |
+| Output Tokens | 8 |
+| `max_num_batched_tokens` | 512 |
+| `max_num_prefill_seqs` | 8 |
+| `execution_mode` | `cudagraph` |
+| 请求到达方式 | staggered |
+| 首批请求数 | 4 |
+| 后续每批请求数 | 4 |
+| 最小到达间隔 | 2 Steps |
+| 随机种子 | 42 |
+| Decode 并发上限 | 4、8、16 |
+| 重复次数 | 每档 5 轮 |
+
+三档配置的请求总数和 Prompt 长度分布完全一致，每档共统计 160 个请求。所有配置均完成请求，没有因 KV Cache 分配失败产生的记录，也没有 Decode Preemption。
+
+### 10.2 整体性能结果
+
+下表为每档 5 轮的均值。吞吐量单位为 tokens/s，延迟单位为 ms。
+
+| 指标 | Decode cap=4 | Decode cap=8 | Decode cap=16 |
+|---|---:|---:|---:|
+| Total Time | 3103.73 | 3049.40 | 3008.92 |
+| Output Throughput | 82.54 | 84.14 | 85.17 |
+| Mean TTFT | 964.65 | 987.78 | 994.64 |
+| Mean TPOT | 86.07 | 62.17 | 62.16 |
+| Mean Request Latency | 1567.12 | 1422.98 | 1429.74 |
+| Engine Steps | 60 | 44 | 42 |
+| Total Time 标准差 | 91.46 | 161.03 | 108.40 |
+| Throughput 标准差 | 2.38 | 4.37 | 3.04 |
+
+主要观察：
+
+- cap4 的 Decode 并发偏低：平均 TPOT 为 86.07 ms，且需要 60 个 Engine Steps。
+- cap8 相比 cap4，平均 TPOT 从 86.07 ms 降至 62.17 ms，平均请求延迟从 1567.12 ms 降至 1422.98 ms，Engine Steps 从 60 降至 44。
+- cap16 相比 cap8，平均吞吐从 84.14 提升至 85.17 tokens/s，约提升 1.22%；Total Time 约降低 1.33%。但平均 TPOT 几乎不变，Mean TTFT 和 Mean Request Latency 略有上升。
+- cap16 的平均吞吐最高，但相对 cap8 的提升幅度较小，且当前 5 轮实验不足以证明这 1.22% 的差异具有统计显著性。
+
+### 10.3 按 Prompt 长度拆分的请求指标
+
+以下为合并 5 轮后的请求级统计均值，单位为 ms。Pooled P50/P95 是将该配置 5 轮的请求样本合并后计算；它们不是“5 个轮均值”的分位数。
+
+| Prompt | Decode cap | Mean TTFT | Mean Queue Wait | Mean Request Latency | Mean TPOT |
+|---:|---:|---:|---:|---:|---:|
+| 128 | 4 | 302.87 | 57.86 | 988.83 | 97.99 |
+| 128 | 8 | 314.10 | 59.99 | 813.84 | 71.39 |
+| 128 | 16 | 312.89 | 60.41 | 811.52 | 71.23 |
+| 512 | 4 | 964.32 | 57.18 | 1638.67 | 96.34 |
+| 512 | 8 | 979.58 | 58.95 | 1478.32 | 71.25 |
+| 512 | 16 | 987.15 | 60.17 | 1491.34 | 72.03 |
+| 1024 | 4 | 1692.98 | 56.42 | 2124.54 | 61.65 |
+| 1024 | 8 | 1737.84 | 58.55 | 2032.16 | 42.05 |
+| 1024 | 16 | 1752.81 | 58.94 | 2042.01 | 41.32 |
+
+观察与解释：
+
+- cap4 提升到 cap8 后，三种 Prompt 长度的 TPOT 均明显下降；请求总延迟也均下降，其中 Prompt=128 的下降幅度最大。
+- cap8 提升到 cap16 后，各 Prompt 长度的请求总延迟变化很小：Prompt=128 略有下降，Prompt=512 和 1024 略有上升。
+- 三种 Prompt 长度的 TTFT 均随 Decode cap 从 4 增至 8、16 而略有上升。
+- 不同 Prompt 长度的平均首次 Prefill 队列等待约为 56–60 ms，三档 Decode cap 之间差异较小。该指标只表示首次被调度 Prefill 之前的队列等待，不包含后续 Chunk Prefill 的全部执行时间。
+- Prompt=128、512、1024 的 TTFT 差异明显，但不能把这种差异简单归因于排队；Prompt 计算量本身也不同。需要结合每个 Step 的实际执行时间和请求到达时间进一步分析。
+
+请求级 Pooled 分位数示例（单位 ms）：
+
+| Prompt | cap | TTFT P50 / P95 | Queue Wait P50 / P95 | Request Latency P50 / P95 |
+|---:|---:|---:|---:|---:|
+| 128 | 4 | 343.63 / 414.67 | 70.91 / 139.88 | 1045.34 / 1296.87 |
+| 128 | 8 | 343.28 / 444.99 | 71.19 / 143.76 | 827.47 / 1005.56 |
+| 128 | 16 | 349.92 / 442.66 | 70.90 / 145.68 | 839.71 / 942.94 |
+| 512 | 4 | 1115.68 / 1217.18 | 67.39 / 139.01 | 1717.41 / 2027.75 |
+| 512 | 8 | 1100.36 / 1249.11 | 69.59 / 143.99 | 1592.98 / 1752.95 |
+| 512 | 16 | 1119.53 / 1271.57 | 68.38 / 152.50 | 1640.31 / 1763.03 |
+| 1024 | 4 | 1728.75 / 1934.33 | 69.53 / 139.89 | 2106.34 / 2365.61 |
+| 1024 | 8 | 1769.66 / 1990.67 | 70.09 / 143.85 | 2024.40 / 2367.64 |
+| 1024 | 16 | 1805.46 / 2006.07 | 70.02 / 146.03 | 2014.95 / 2370.13 |
+
+### 10.4 ModelRunner 与 Scheduler 运行时诊断
+
+5 轮汇总的平均诊断指标：
+
+| 指标 | cap4 | cap8 | cap16 |
+|---|---:|---:|---:|
+| Decode Graph Hit Rate | 100% | 100% | 100% |
+| Decode Graph Calls（平均每轮） | 59 | 43 | 41 |
+| Decode Eager Calls（平均每轮） | 0 | 0 | 0 |
+| Aggregate Token Budget Utilization | 56.98% | 77.70% | 81.40% |
+| 平均 Scheduler Decode Count | 3.73 | 5.09 | 5.33 |
+| 平均 Prefill Candidates | 4.17 | 5.70 | 5.98 |
+| 平均 Prefill Wait Steps | 0.81 | 0.81 | 0.81 |
+| Prefill Wait Steps P95 | 2 | 2 | 2 |
+| 平均 Prefill Queue Wait | 57.17 ms | 59.18 ms | 59.87 ms |
+| KV Allocation Failures | 0 | 0 | 0 |
+| Decode Preemptions | 0 | 0 | 0 |
+
+口径说明：
+
+- Graph Hit Rate 是 ModelRunner 调用级统计；本组测试中 Graph Hit Rate 为 100%、Decode Eager Calls 为 0，表示记录到的 Decode 调用均命中 Graph 路径，不代表 GPU kernel 已达到最优效率。
+- Aggregate Token Budget Utilization 按所有 Step 的 `used_tokens / token_budget` 汇总计算，包含 Decode 和 Prefill Token，不是 Prefill 专属预算利用率。
+- Scheduler Decode Count 是每个 Step 调度的 Decode 请求数的平均值。
+- Prefill Candidates 是参与候选分配的等待请求数，不等于实际获得 Prefill Token 的请求数。
+- KV Allocation Failures 和 Decode Preemptions 在本组实验中均为 0。
+
+### 10.5 当前结论与配置选择
+
+当前建议将 `max_num_decode_seqs=8` 保留为默认值：
+
+- cap4 的 Decode 并发不足，TPOT 和请求完成延迟明显较高。
+- cap8 在 TPOT、请求完成延迟、TTFT 和整体吞吐之间取得相对均衡的结果。
+- cap16 可以作为吞吐优先的候选配置，但相对 cap8 的平均吞吐提升约 1.22%，目前没有足够证据证明该提升稳定且具有统计显著性。
+
+这组实验没有证明 cap16 导致 Prefill 饥饿：三档配置的 Prefill Wait Steps 均值和 P95 相同，KV 分配失败也均为 0。但首次队列等待和候选数不能完整代表所有 Chunk 的公平性，因此仍需单独做请求级 Prefill 公平性实验。
+
+### 10.6 后续实验
+
+下一步优先验证多请求 Chunked Prefill 的核心调度性质，而不是继续盲目增大 Decode cap：
+
+- [ ] 记录每个请求每个 Step 实际获得的 Prefill Token 数。
+- [ ] 记录每个请求首次 Prefill、每次 Chunk Prefill 和 Prefill 完成的 Step。
+- [ ] 统计每个请求的累计等待 Step、最大连续等待 Step 和 Prefill 完成时间。
+- [ ] 按 Prompt 长度比较请求级 Prefill 进度和完成时间，检查是否存在长 Prompt 或短 Prompt 饥饿。
+- [ ] 将队列等待、调度等待与 GPU 实际执行时间分开统计。
+- [ ] 在相同负载下对 cap8 与 cap16 做更多轮配对实验，再决定是否提供吞吐优先配置。
+
+本节结果只适用于上述 Qwen3-0.6B、32 请求、指定 Prompt 分布和当前 GPU 环境；不能外推为 256 并发或其他模型上的性能结论。
