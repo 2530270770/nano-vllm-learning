@@ -567,6 +567,7 @@ def test_prefill_aging_prioritizes_older_request():
     assert output.prefill_seqs == [older_seq]
 
     assert older_seq.prefill_wait_steps == 0
+    assert older_seq.prefill_total_wait_steps == 5
 
     # 新请求没有被丢弃。
     assert list(scheduler.waiting) == [newer_seq]
@@ -598,8 +599,9 @@ def test_prefill_aging_disabled_preserves_fifo():
     # 关闭 Aging 时仍然按照原始队列顺序。
     assert output.prefill_seqs == [newer_seq]
 
-    # 关闭 Aging 不会修改等待计数。
-    assert older_seq.prefill_total_wait_steps == 5
+    # 关闭 Aging 不参与排序年龄，但累计等待指标仍正常递增。
+    assert older_seq.prefill_wait_steps == 0
+    assert older_seq.prefill_total_wait_steps == 6
 
     assert list(scheduler.waiting) == [older_seq]
 
