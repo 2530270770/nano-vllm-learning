@@ -139,10 +139,11 @@ class Scheduler:
         for _ in range(waiting_count):
             seq = self.waiting.popleft()
 
+            # 累计等待步数始终记录；Aging 开关只影响排序，不影响指标口径。
+            seq.prefill_total_wait_steps += 1
             if self.enable_prefill_aging:
-                # 每经过一轮调度，等待中的请求年龄增加
+                # 连续等待年龄仅在 Aging 启用时参与排序。
                 seq.prefill_wait_steps += 1
-                seq.prefill_total_wait_steps += 1
 
             waiting_candidates.append(seq)
 
@@ -320,6 +321,8 @@ class Scheduler:
             "prefill_demands": [demand for _, demand in candidates],
             "prefill_allocations": [seq.num_scheduled_tokens for seq in prefill_seqs],
             "prefill_seq_ids": [seq.seq_id for seq in prefill_seqs],
+            "prefill_total_wait_steps": [seq.prefill_total_wait_steps for seq in prefill_seqs],
+            "prefill_max_total_wait_steps": max((seq.prefill_total_wait_steps for seq in prefill_seqs), default=0),
             "prefill_tokens": prefill_tokens,
             "token_budget": self.max_num_batched_tokens,
             "used_tokens": allocated_tokens,
