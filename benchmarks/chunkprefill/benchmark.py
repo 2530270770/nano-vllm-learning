@@ -11,6 +11,25 @@ from nanovllm import LLM
 from nanovllm.sampling_params import SamplingParams
 
 
+def parse_prompt_lengths(value):
+    try:
+        lengths = [
+            int(item.strip())
+            for item in value.split(",")
+        ]
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "Prompt lengths must be comma-separated integers."
+        )
+
+    if not lengths or any(length <= 0 for length in lengths):
+        raise argparse.ArgumentTypeError(
+            "Prompt lengths must all be positive integers."
+        )
+
+    return lengths
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -28,6 +47,12 @@ def parse_args():
         default="/home/chen17/huggingface/Qwen3-0.6B",
     )
     parser.add_argument("--num-requests", type=int, default=4)
+    parser.add_argument(
+        "--prompt-lengths",
+        type=parse_prompt_lengths,
+        default=[128, 512, 1024],
+        help="Comma-separated prompt lengths, cycled across requests.",
+    )
     parser.add_argument(
         "--max-num-prefill-seqs",
         type=int,
@@ -148,16 +173,16 @@ def main():
         raise RuntimeError("CUDA is not available")
 
     if args.scenario == "all_at_once":
-        prompt_len = 128
         max_num_batched_tokens = 16384
 
-    elif args.scenario == "staggered":
-        prompt_len = 512
+    elif args.scenario in ("staggered", "stress"):
         max_num_batched_tokens = 512
 
-    elif args.scenario == "stress":
-        prompt_len = 512
-        max_num_batched_tokens = 512
+    # 按请求 ID 循环分配 Prompt 长度
+    prompt_lengths = [
+        args.prompt_lengths[i % len(args.prompt_lengths)]
+        for i in range(args.num_requests)
+    ]
 
     print("=" * 60)
     print("Benchmark Configuration")
@@ -166,12 +191,20 @@ def main():
     print("Scenario:", args.scenario)
     print("Model:", args.model)
     print("Requests:", args.num_requests)
-    print("Prompt tokens:", prompt_len)
+    print("Prompt lengths:", args.prompt_lengths)
+    print(
+        "Prompt length distribution:",
+        {
+            length: prompt_lengths.count(length)
+            for length in sorted(set(prompt_lengths))
+        },
+    )
     print("Output tokens:", args.output_tokens)
     print("Max batched tokens:", max_num_batched_tokens)
     print("Execution mode:", execution_mode)
     print("Eager mode:", enforce_eager)
     print("Max Prefill sequences:", args.max_num_prefill_seqs)
+    
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.model,
@@ -179,7 +212,7 @@ def main():
     )
 
     prompt_ids = [
-        make_prompt_ids(tokenizer, i, prompt_len)
+        make_prompt_ids(tokenizer, i, prompt_lengths[i])
         for i in range(args.num_requests)
     ]
 
@@ -188,7 +221,7 @@ def main():
         args.model,
         max_num_seqs=args.num_requests,
         max_num_batched_tokens=max_num_batched_tokens,
-        max_model_len=1024,
+        max_model_len=2048,
         gpu_memory_utilization=0.85,
         tensor_parallel_size=1,
         enforce_eager=enforce_eager,
@@ -363,11 +396,12 @@ def main():
         "model": args.model,
         "config": {
             "num_requests": args.num_requests,
-            "prompt_tokens": prompt_len,
+            "prompt_lengths": args.prompt_lengths,
+            "request_prompt_lengths": prompt_lengths,
             "output_tokens": args.output_tokens,
             "max_num_seqs": args.num_requests,
             "max_num_batched_tokens": max_num_batched_tokens,
-            "max_model_len": 1024,
+            "max_model_len": 2048,
             "gpu_memory_utilization": 0.85,
             "enforce_eager": enforce_eager,
             "execution_mode": execution_mode,
