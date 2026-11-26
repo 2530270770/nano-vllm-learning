@@ -722,13 +722,59 @@ JSON 文件在本地归档；如果文件名与上述目录不同，以实际生
 
 ### 10.6 后续实验
 
-下一步优先验证多请求 Chunked Prefill 的核心调度性质，而不是继续盲目增大 Decode cap：
+请求级 Prefill Trace 已加入 Benchmark（见第 11 节），尚未在真实 GPU 环境执行验证。下一步优先使用新版本重新跑 cap8 / cap16 配对实验，检查：
 
-- [ ] 记录每个请求每个 Step 实际获得的 Prefill Token 数。
-- [ ] 记录每个请求首次 Prefill、每次 Chunk Prefill 和 Prefill 完成的 Step。
-- [ ] 统计每个请求的累计等待 Step、最大连续等待 Step 和 Prefill 完成时间。
-- [ ] 按 Prompt 长度比较请求级 Prefill 进度和完成时间，检查是否存在长 Prompt 或短 Prompt 饥饿。
-- [ ] 将队列等待、调度等待与 GPU 实际执行时间分开统计。
-- [ ] 在相同负载下对 cap8 与 cap16 做更多轮配对实验，再决定是否提供吞吐优先配置。
+- [ ] 每个请求每个 Step 实际获得的 Prefill Token 数。
+- [ ] 每个请求首次 Prefill、每次 Chunk Prefill 和 Prefill 完成的 Step。
+- [ ] 每个请求的累计等待 Step、最大连续等待 Step 和 Prefill 完成时间。
+- [ ] 不同 Prompt 长度请求的进度与完成时间，是否存在饥饿。
+- [ ] Scheduler CPU 时间与 Decode / Prefill 模型 Forward GPU 时间的关系。
+
+本节已有性能结果来自旧版 Trace；新增字段必须重新运行后才会出现在新 JSON 中。已有结果不应被描述为已经完成请求级公平性验证。
 
 本节结果只适用于上述 Qwen3-0.6B、32 请求、指定 Prompt 分布和当前 GPU 环境；不能外推为 256 并发或其他模型上的性能结论。
+
+------------------------------------------------------------------------
+
+## 11. 请求级 Prefill 公平性 Trace（代码已提交，待 GPU 验证）
+
+为定位多请求 Chunked Prefill 中的等待与进度差异，`benchmarks/chunkprefill/benchmark.py` 新增请求级 Trace。该改动只观测 Scheduler 输出和 ModelRunner Forward，不改变调度决策。
+
+### 11.1 每个请求新增字段
+
+| 字段 | 含义 |
+|---|---|
+| `prefill_chunk_count` | 请求实际获得 Prefill 分配的 Chunk 数 |
+| `prefill_chunks` | 每个 Chunk 的 Step、起始 Cached Token、分配 Token、执行后 Cached Token、是否完成 Prompt |
+| `prefill_completion_step` | `num_cached_tokens` 首次达到 `num_prompt_tokens` 的 Engine Step |
+| `prefill_completion_time_ms` | Prefill 完成所在 Step 结束时的相对时间 |
+| `prefill_completion_latency_ms` | 从请求到达到 Prefill 完成的时间 |
+| `prefill_total_wait_steps` | Prompt 尚未完成时，没有获得 Prefill 分配的 Step 总数 |
+| `prefill_max_consecutive_wait_steps` | 连续没有获得 Prefill 分配的最大 Step 数 |
+| `prefill_total_allocated_tokens` | 所有 Prefill Chunk 分配 Token 数之和 |
+
+### 11.2 每个 Engine Step 新增字段
+
+- `prefill_chunks`：本 Step 实际调度的 Chunk 明细，并在 Forward 完成后补充执行结果。
+- `scheduler_schedule_time_ms`：Scheduler.schedule() 的 CPU wall-clock 时间。
+- `decode_forward_gpu_time_ms`：Decode 模型 Forward / Logits 计算的 CUDA Event 时间。
+- `prefill_forward_gpu_time_ms`：Prefill 模型 Forward / Logits 计算的 CUDA Event 时间。
+
+GPU 时间是整个批次的阶段级时间，不是单请求耗时；它不包含输入 Tensor 准备与采样，也不能简单与 Step 总耗时相加。CUDA Event 不在每个阶段后强制同步，以避免人为增加同步开销。
+
+### 11.3 汇总字段与统计口径
+
+`summary.prefill_fairness` 和 `summary.prefill_fairness_by_prompt_length` 汇总累计等待、最大连续等待、Chunk 数和 Prefill 完成延迟。
+
+累计等待定义：每个 Engine Step 结束后，如果请求仍有未缓存 Prompt Token，且本 Step 没有获得任何 Prefill 分配，则累计等待加一；获得任意 Prefill 分配的 Step 不计等待。它同时覆盖首次排队等待和 Chunk 之间的等待，不等同于原有的 `prefill_wait_steps`（首次 Prefill 选择前等待的 Step 数）。
+
+Prefill 完成定义：执行完某个 Engine Step 后，`num_cached_tokens >= num_prompt_tokens`。完成时间记录在该 Step 的 CUDA 同步之后，因此是 Step 结束时刻，不是单独的 Prefill Kernel 完成时刻。
+
+### 11.4 验证状态
+
+- 代码已推送到 `chunkprefill` 分支。
+- 尚未在 RTX 3060 Laptop 上运行，不能宣称 Trace 数值已验证。
+- 新 JSON 生成后，先检查每个请求的 `prefill_total_allocated_tokens == prompt_tokens`，且 Chunk 的 Cached Token 区间连续、不重叠；再分析 cap8 / cap16 的公平性。
+- 新增的 GPU 阶段计时也需要在真实运行中确认事件记录完整且非负。
+
+建议先执行 1 次 32 请求 Smoke，再执行 cap8 / cap16 各 5 轮正式实验。不要将旧 JSON 与新增字段混合统计。
