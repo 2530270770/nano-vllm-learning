@@ -97,6 +97,34 @@ def parse_args():
     return parser.parse_args()
 
 
+def percentile(values, percentile_value):
+    """Nearest-rank percentile; returns None for an empty sample."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    rank = max(1, int((percentile_value * len(ordered) + 0.999999)))
+    return ordered[min(rank - 1, len(ordered) - 1)]
+
+
+def summarize_wait_metrics(requests):
+    """Summarize queueing delay until a request is first selected for Prefill."""
+    wait_steps = [item["prefill_wait_steps"] for item in requests]
+    wait_ms = [item["prefill_queue_wait_ms"] for item in requests]
+    return {
+        "request_count": len(requests),
+        "mean_wait_steps": (
+            sum(wait_steps) / len(wait_steps) if wait_steps else None
+        ),
+        "p50_wait_steps": percentile(wait_steps, 0.50),
+        "p95_wait_steps": percentile(wait_steps, 0.95),
+        "max_wait_steps": max(wait_steps) if wait_steps else None,
+        "mean_wait_ms": sum(wait_ms) / len(wait_ms) if wait_ms else None,
+        "p50_wait_ms": percentile(wait_ms, 0.50),
+        "p95_wait_ms": percentile(wait_ms, 0.95),
+        "max_wait_ms": max(wait_ms) if wait_ms else None,
+    }
+
+
 def set_seed(seed):
     random.seed(seed)
     torch.manual_seed(seed)
@@ -299,9 +327,50 @@ def main():
     finish_times = [None] * args.num_requests
 
     step_records = []
+    first_prefill_steps = {}
+    first_prefill_times = {}
+    schedule_observer = {
+        "step": 0,
+        "decode_request_ids": [],
+        "prefill_request_ids": [],
+    }
 
     torch.cuda.synchronize()
     benchmark_start = time.perf_counter()
+
+    # Observe the scheduler's actual output without changing scheduling policy.
+    # This measures queue wait until first Prefill selection, not GPU completion.
+    original_schedule = engine.scheduler.schedule
+
+    def observed_schedule():
+        schedule_output = original_schedule()
+        schedule_time = time.perf_counter() - benchmark_start
+        seq_to_request = {
+            seq.seq_id: index
+            for index, seq in enumerate(sequences)
+            if seq is not None
+        }
+        decode_ids = [
+            seq_to_request[seq.seq_id]
+            for seq in schedule_output.decode_seqs
+            if seq.seq_id in seq_to_request
+        ]
+        prefill_ids = [
+            seq_to_request[seq.seq_id]
+            for seq in schedule_output.prefill_seqs
+            if seq.seq_id in seq_to_request
+        ]
+        schedule_observer["decode_request_ids"] = decode_ids
+        schedule_observer["prefill_request_ids"] = prefill_ids
+
+        for request_id in prefill_ids:
+            if request_id not in first_prefill_steps:
+                first_prefill_steps[request_id] = schedule_observer["step"]
+                first_prefill_times[request_id] = schedule_time
+
+        return schedule_output
+
+    engine.scheduler.schedule = observed_schedule
 
     submitted_count = 0
     next_arrival_step = 0
@@ -382,6 +451,10 @@ def main():
                     step_id + args.staggered_interval_steps
                 )
 
+        schedule_observer["step"] = step_id
+        schedule_observer["decode_request_ids"] = []
+        schedule_observer["prefill_request_ids"] = []
+
         torch.cuda.synchronize()
         step_start = time.perf_counter()
 
@@ -396,6 +469,8 @@ def main():
             "decode_tokens": decode_tokens,
             "prefill_tokens": prefill_tokens,
             "newly_arrived_request_ids": newly_arrived,
+            "decode_request_ids": schedule_observer["decode_request_ids"],
+            "prefill_request_ids": schedule_observer["prefill_request_ids"],
             "waiting_queue_size": len(engine.scheduler.waiting),
             "running_queue_size": len(engine.scheduler.running),
         })
@@ -432,6 +507,10 @@ def main():
 
         if first_token_times[i] is None or finish_times[i] is None:
             raise RuntimeError(f"Request {i} did not finish correctly")
+        if i not in first_prefill_steps or i not in first_prefill_times:
+            raise RuntimeError(
+                f"Request {i} completed without being observed in a Prefill batch"
+            )
 
         completion_tokens = seq.num_completion_tokens
 
@@ -443,6 +522,16 @@ def main():
 
         ttft = first_token_times[i] - arrival_times[i]
         latency = finish_times[i] - arrival_times[i]
+        prefill_wait_steps = first_prefill_steps[i] - arrival_steps[i]
+        prefill_queue_wait_ms = (
+            first_prefill_times[i] - arrival_times[i]
+        ) * 1000
+
+        if prefill_wait_steps < 0 or prefill_queue_wait_ms < -0.1:
+            raise RuntimeError(
+                f"Request {i} has invalid Prefill wait metrics: "
+                f"steps={prefill_wait_steps}, ms={prefill_queue_wait_ms:.3f}"
+            )
 
         if completion_tokens > 1:
             tpot = (
@@ -458,6 +547,10 @@ def main():
             "arrival_time_ms": arrival_times[i] * 1000,
             "arrival_step": arrival_steps[i],
             "arrival_batch_id": arrival_batch_ids[i],
+            "first_prefill_step": first_prefill_steps[i],
+            "first_prefill_schedule_time_ms": first_prefill_times[i] * 1000,
+            "prefill_wait_steps": prefill_wait_steps,
+            "prefill_queue_wait_ms": max(0.0, prefill_queue_wait_ms),
             "ttft_ms": ttft * 1000,
             "tpot_ms": None if tpot is None else tpot * 1000,
             "request_latency_ms": latency * 1000,
@@ -476,6 +569,16 @@ def main():
     total_prefill_tokens = sum(
         item["prefill_tokens"] for item in step_records
     )
+
+    wait_by_prompt_length = {}
+    for prompt_length in sorted(set(prompt_lengths)):
+        group = [
+            item for item in request_results
+            if item["prompt_tokens"] == prompt_length
+        ]
+        wait_by_prompt_length[str(prompt_length)] = (
+            summarize_wait_metrics(group)
+        )
 
     result = {
         "variant": args.variant,
@@ -496,6 +599,11 @@ def main():
             "seed": args.seed,
             "max_num_prefill_seqs": args.max_num_prefill_seqs,
             "enable_prefill_aging": args.enable_prefill_aging,
+            "prefill_wait_metric_definition": (
+                "Engine steps from request arrival to first scheduler "
+                "selection in a Prefill batch; queue wait time is measured "
+                "at schedule() return, before model execution."
+            ),
             "staggered_initial_requests": (
                 args.staggered_initial_requests
                 if args.scenario == "staggered"
@@ -526,6 +634,8 @@ def main():
                 x["request_latency_ms"] for x in request_results
             ) / len(request_results),
             "total_steps": len(step_records),
+            "prefill_wait": summarize_wait_metrics(request_results),
+            "prefill_wait_by_prompt_length": wait_by_prompt_length,
             "total_prefill_tokens": total_prefill_tokens,
             "total_decode_tokens": total_decode_tokens,
             "initial_allocated_mib": initial_allocated / 1024**2,
