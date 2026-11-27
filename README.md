@@ -938,7 +938,7 @@ Graph Hit Rate 表示 Decode ModelRunner 调用路径命中 CUDA Graph 的比例
 ```bash
 # 在仓库根目录执行；无需 GPU
 python -m py_compile benchmarks/chunkprefill/summarize_results.py
-python -m unittest tests.test_chunkprefill_report -v
+python -m unittest discover -s tests -p 'test_chunkprefill_report.py' -v
 
 python benchmarks/chunkprefill/summarize_results.py
 ```
