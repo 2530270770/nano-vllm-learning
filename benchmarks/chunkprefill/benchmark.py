@@ -584,22 +584,8 @@ def main():
         torch.cuda.synchronize()
         step_end = time.perf_counter()
 
-        # Count steps in which an incomplete Prompt received no Prefill service.
-        selected_prefill_ids = set(schedule_observer["prefill_request_ids"])
-        for request_id, seq in enumerate(sequences):
-            if seq is None or seq.num_cached_tokens >= seq.num_prompt_tokens:
-                prefill_current_wait_steps[request_id] = 0
-                continue
-            if request_id in selected_prefill_ids:
-                prefill_current_wait_steps[request_id] = 0
-            else:
-                prefill_total_wait_steps[request_id] += 1
-                prefill_current_wait_steps[request_id] += 1
-                prefill_max_consecutive_wait_steps[request_id] = max(
-                    prefill_max_consecutive_wait_steps[request_id],
-                    prefill_current_wait_steps[request_id],
-                )
-
+        # Finalize this step's Prefill progress before updating wait counters.
+        # A completed request must never accumulate wait during later Decode steps.
         for chunk in schedule_observer["prefill_chunks"]:
             request_id = chunk["request_id"]
             seq = sequences[request_id]
@@ -614,6 +600,24 @@ def main():
                 prefill_completion_steps[request_id] = step_id
                 prefill_completion_times[request_id] = (
                     step_end - benchmark_start
+                )
+
+        # Count only steps before Prefill completion in which an incomplete
+        # Prompt received no Prefill service. Completion is tracked explicitly
+        # because num_cached_tokens may be reset/reused by later Decode steps.
+        selected_prefill_ids = set(schedule_observer["prefill_request_ids"])
+        for request_id, seq in enumerate(sequences):
+            if seq is None or request_id in prefill_completion_steps:
+                prefill_current_wait_steps[request_id] = 0
+                continue
+            if request_id in selected_prefill_ids:
+                prefill_current_wait_steps[request_id] = 0
+            else:
+                prefill_total_wait_steps[request_id] += 1
+                prefill_current_wait_steps[request_id] += 1
+                prefill_max_consecutive_wait_steps[request_id] = max(
+                    prefill_max_consecutive_wait_steps[request_id],
+                    prefill_current_wait_steps[request_id],
                 )
 
         stage_gpu_times = {"decode_forward": 0.0, "prefill_forward": 0.0}
