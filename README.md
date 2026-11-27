@@ -927,3 +927,49 @@ Graph Hit Rate 表示 Decode ModelRunner 调用路径命中 CUDA Graph 的比例
 - [ ] 在更高请求数和不同 Prompt 分布下验证调度策略，不把当前 32 请求结果外推到 256 并发。
 
 本节结论仅适用于上述模型、设备、32 请求工作负载和参数配置。
+
+
+### 12.7 自动化结果汇总（CPU-only）
+
+新增 `benchmarks/chunkprefill/summarize_results.py`，用于读取本目录的原始 JSON，执行完整性校验并自动生成 CSV / Markdown 报告。脚本只使用 Python 标准库，不加载模型、不初始化 CUDA，也不会修改原始 Benchmark JSON。
+
+执行命令：
+
+```bash
+# 在仓库根目录执行；无需 GPU
+python -m py_compile benchmarks/chunkprefill/summarize_results.py
+python -m unittest tests.test_chunkprefill_report -v
+
+python benchmarks/chunkprefill/summarize_results.py
+```
+
+默认读取：
+
+```text
+outputs/benchmark/chunkprefill/decode_cap_sweep/
+```
+
+默认要求 cap8 / cap16 各有 5 轮结果，并检查两档 Seed 配对一致。校验包括：
+- 文件名中的 Decode cap / Seed 与 JSON 配置一致。
+- 请求数、Prefill 完成数、Output Token 总数和 Step 数组一致。
+- 每个请求的 Prefill Chunk Cached Token 游标连续，且最终达到 Prompt 长度。
+- ModelRunner Decode Graph 调用数不超过 Decode 总调用数。
+
+生成文件位于 `outputs/benchmark/chunkprefill/decode_cap_sweep/analysis/`：
+
+| 文件 | 内容 |
+|---|---|
+| `run_summary.csv` | 每轮实验配置、性能和运行时诊断 |
+| `aggregate_summary.csv` | 每档配置跨轮均值、样本标准差、中位数、最值 |
+| `paired_comparison.csv` | 按 Seed 配对的 cap8 / cap16 指标差值与百分比 |
+| `prompt_fairness.csv` | 合并请求样本后，按 Prompt 长度统计等待、Chunk 和完成延迟 |
+| `report.md` | 可直接放入项目文档的汇总报告 |
+
+统计口径：
+- Run-level 均值和标准差以每轮 JSON 的 summary 指标为样本，标准差使用样本标准差。
+- Prompt fairness 是将该 cap 的所有轮次请求合并后统计，P50 / P95 使用 nearest-rank。
+- Aggregate Token Budget Utilization 使用所有 Step 的 `sum(used_tokens) / sum(token_budget)`，不是各 Step 利用率的简单平均。
+- 配对差值定义为高 cap 减低 cap；延迟指标正差值通常代表变差，吞吐指标正差值代表变好。
+- 该脚本只负责离线结果分析，不能替代 GPU 正确性或性能测试。
+
+当前 10 轮实验的 CSV 和 Markdown 报告已随仓库提交，位于上述 analysis 目录。后续新增实验完成后，重新运行脚本即可覆盖生成新的分析文件；请先归档旧报告或使用不同的 `--output-dir` 保留历史版本。
