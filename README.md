@@ -923,7 +923,7 @@ Graph Hit Rate 表示 Decode ModelRunner 调用路径命中 CUDA Graph 的比例
 - [x] 验证请求 Prefill Chunk 连续性、完成状态与输出 Token 数。
 - [x] 验证 CUDA Graph 调用路径、KV Allocation Failure 与 Decode Preemption 统计。
 - [x] 根据实测结果保留 Decode cap=8 默认值。
-- [ ] 将本轮 10 个 JSON 的汇总统计脚本化，方便后续复测自动生成 CSV / Markdown。
+- [x] 将本轮 10 个 JSON 的汇总统计脚本化，并生成 CSV / Markdown 报告（见第 12.7 节）。
 - [ ] 在更高请求数和不同 Prompt 分布下验证调度策略，不把当前 32 请求结果外推到 256 并发。
 
 本节结论仅适用于上述模型、设备、32 请求工作负载和参数配置。
