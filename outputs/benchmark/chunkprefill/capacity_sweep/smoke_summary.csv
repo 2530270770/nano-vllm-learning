@@ -1,0 +1,4 @@
+request_count,total_time_ms,output_throughput_tok_s,mean_ttft_ms,mean_tpot_ms,mean_request_latency_ms,engine_steps,mean_prefill_wait_steps,p95_prefill_wait_steps,max_prefill_wait_steps,mean_total_prefill_wait_steps,p95_total_prefill_wait_steps,max_total_prefill_wait_steps,max_consecutive_wait_steps,mean_prefill_completion_latency_ms,p95_prefill_completion_latency_ms,token_budget_utilization,kv_allocation_failures,decode_preemptions,decode_graph_hit_rate,min_free_kv_blocks
+32,2911.38,87.93,964.70,60.47,1387.97,44,0.813,2,2,5.219,11,11,2,964.70,1922.91,77.70%,0,0,100%,35
+40,3526.12,90.75,1176.71,61.67,1608.43,53,1.075,2,3,8.050,16,17,3,1176.71,2322.54,81.22%,0,0,100%,28
+48,4280.27,89.71,1421.89,63.80,1868.49,63,1.396,3,3,11.229,23,24,3,1421.89,2800.94,83.58%,0,0,100%,12
