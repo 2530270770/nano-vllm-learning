@@ -766,7 +766,7 @@ GPU 时间是整个批次的阶段级时间，不是单请求耗时；它不包�
 
 `summary.prefill_fairness` 和 `summary.prefill_fairness_by_prompt_length` 汇总累计等待、最大连续等待、Chunk 数和 Prefill 完成延迟。
 
-累计等待定义：每个 Engine Step 结束后，如果请求仍有未缓存 Prompt Token，且本 Step 没有获得任何 Prefill 分配，则累计等待加一；获得任意 Prefill 分配的 Step 不计等待。它同时覆盖首次排队等待和 Chunk 之间的等待，不等同于原有的 `prefill_wait_steps`（首次 Prefill 选择前等待的 Step 数）。
+累计等待定义：每个 Engine Step 结束后，如果请求尚未完成 Prefill，且本 Step 没有获得任何 Prefill 分配，则累计等待加一；获得任意 Prefill 分配的 Step 不计等待。Prefill 完成后立即停止累计，后续 Decode Step 不计入等待。完成状态由首次达到 `num_cached_tokens >= num_prompt_tokens` 的 Step 显式记录，避免后续 Decode 阶段 Cached Token 状态变化污染等待统计。它同时覆盖首次排队等待和 Chunk 之间的等待，不等同于原有的 `prefill_wait_steps`（首次 Prefill 选择前等待的 Step 数）。
 
 Prefill 完成定义：执行完某个 Engine Step 后，`num_cached_tokens >= num_prompt_tokens`。完成时间记录在该 Step 的 CUDA 同步之后，因此是 Step 结束时刻，不是单独的 Prefill Kernel 完成时刻。
 
