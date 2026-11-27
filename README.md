@@ -973,3 +973,54 @@ outputs/benchmark/chunkprefill/decode_cap_sweep/
 - 该脚本只负责离线结果分析，不能替代 GPU 正确性或性能测试。
 
 当前 10 轮实验的 CSV 和 Markdown 报告已随仓库提交，位于上述 analysis 目录。后续新增实验完成后，重新运行脚本即可覆盖生成新的分析文件；请先归档旧报告或使用不同的 `--output-dir` 保留历史版本。
+
+------------------------------------------------------------------------
+
+## 13. 更高并发容量验证（新增测试入口，待 GPU 实测）
+
+当前 32 请求结果不能外推到更高并发。新增
+`benchmarks/chunkprefill/run_capacity_sweep.py`，用于按请求数递增运行
+Optimized GPU Benchmark。默认档位为 32、40、48，每档先执行 1 次 Smoke；
+每次都使用 staggered 到达、Prompt 长度循环 128/512/1024、Output=8、
+Decode cap=8、Prefill cap=8、CUDA Graph。
+
+### 13.1 先做 CPU-only 检查
+
+```bash
+python -m py_compile benchmarks/chunkprefill/run_capacity_sweep.py
+python -m unittest discover -s tests -p 'test_chunkprefill_capacity_sweep.py' -v
+python benchmarks/chunkprefill/run_capacity_sweep.py --dry-run
+```
+
+Dry run 只打印命令并写入测试清单，不会加载模型或调用 CUDA。
+
+### 13.2 RTX 3060 Laptop 递进 Smoke
+
+```bash
+python benchmarks/chunkprefill/run_capacity_sweep.py
+```
+
+脚本默认依次运行 32、40、48 请求，每档 1 次。每轮原始 JSON 写入：
+
+```text
+outputs/benchmark/chunkprefill/capacity_sweep/
+```
+
+`capacity_sweep_manifest.json` 记录每轮命令、Seed、输出路径和退出状态。
+若某轮 Benchmark 返回非零退出码（例如 OOM），脚本会立即停止，不会自动继续更高请求数。先检查 GPU 状态和失败日志，再决定是否降低请求数、Prompt 长度或 Output 长度。
+
+### 13.3 正式重复实验
+
+只有当 32/40/48 三档 Smoke 全部完成、所有请求均正常完成且无 KV Allocation Failure 后，才建议进行重复实验。例如：
+
+```bash
+python benchmarks/chunkprefill/run_capacity_sweep.py \
+  --request-counts 32,40,48 \
+  --repeats 3 \
+  --seed-base 42 \
+  --output-dir outputs/benchmark/chunkprefill/capacity_sweep_repeats
+```
+
+该脚本是串行执行器，不会并行启动多个模型进程，也不会覆盖已有同名 JSON。默认档位只是保守的实验起点，不代表已证明当前显卡能够承载 48 请求。
+
+**当前状态：** Runner 与 CPU 测试已提交；更高并发 GPU Smoke / 正式实验尚未执行，因此 README 不记录任何高并发性能结论。当前 RTX 3060 Laptop 6GB 不应直接尝试 128/256 请求。
