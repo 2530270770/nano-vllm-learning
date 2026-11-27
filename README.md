@@ -1024,3 +1024,23 @@ python benchmarks/chunkprefill/run_capacity_sweep.py \
 该脚本是串行执行器，不会并行启动多个模型进程，也不会覆盖已有同名 JSON。默认档位只是保守的实验起点，不代表已证明当前显卡能够承载 48 请求。
 
 **当前状态：** Runner 与 CPU 测试已提交；更高并发 GPU Smoke / 正式实验尚未执行，因此 README 不记录任何高并发性能结论。当前 RTX 3060 Laptop 6GB 不应直接尝试 128/256 请求。
+### 13.4 首轮 GPU Smoke 结果（2026-11-27）
+
+已上传 32 / 40 / 48 请求各 1 轮结果（Seed=42）。三档均正常退出，且每个请求均完成 Prefill 与 8 个 Output Tokens；逐请求检查 Prefill Chunk 的 Cached Token 游标连续、最终等于 Prompt 长度。
+
+| 请求数 | 总耗时 (ms) | 吞吐 (tok/s) | TTFT (ms) | TPOT (ms) | 请求延迟 (ms) | Engine Steps | Token Budget 利用率 | Prefill 总等待均值 / P95 / Max (steps) | Max 连续等待 | KV 分配失败 | Decode Preemption |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 32 | 2911.38 | 87.93 | 964.70 | 60.47 | 1387.97 | 44 | 77.70% | 5.22 / 11 / 11 | 2 | 0 | 0 |
+| 40 | 3526.12 | 90.75 | 1176.71 | 61.67 | 1608.43 | 53 | 81.22% | 8.05 / 16 / 17 | 3 | 0 | 0 |
+| 48 | 4280.27 | 89.71 | 1421.89 | 63.80 | 1868.49 | 63 | 83.58% | 11.23 / 23 / 24 | 3 | 0 | 0 |
+
+补充观察：
+- 三档 Decode Graph Hit Rate 均为 100%，Decode Eager Calls 均为 0。
+- 最低 Free KV Blocks 分别为 35、28、12；48 请求时 KV Cache 余量已明显收窄，但本轮没有发生 KV Allocation Failure。
+- 1024-token Prompt 的 Prefill 总等待均值分别为 8.90、13.62、19.06 steps；并发增加时长 Prompt 的排队/分块等待增长更明显。
+- 48 请求吞吐没有超过 40 请求（89.71 vs 90.75 tok/s），因此目前只能说 48 请求可完成，不能说它比 40 请求更快。
+- 每档只有 1 轮 Smoke，不能据此得出稳定性能排序或统计显著性结论。
+
+汇总 CSV：`outputs/benchmark/chunkprefill/capacity_sweep/smoke_summary.csv`。
+
+**下一步：** 对 32 / 40 / 48 请求各做至少 3 轮配对 Seed 重复实验，再评估是否值得试 56 / 64。当前先不直接冲击 64/96/128；尤其 48 请求最低只剩 12 个 Free KV Blocks，应先确认重复实验的 KV 余量稳定性。
