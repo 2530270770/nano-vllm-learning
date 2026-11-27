@@ -736,7 +736,7 @@ JSON 文件在本地归档；如果文件名与上述目录不同，以实际生
 
 ------------------------------------------------------------------------
 
-## 11. 请求级 Prefill 公平性 Trace（代码已提交，待 GPU 验证）
+## 11. 请求级 Prefill 公平性 Trace（已完成 GPU 验证）
 
 为定位多请求 Chunked Prefill 中的等待与进度差异，`benchmarks/chunkprefill/benchmark.py` 新增请求级 Trace。该改动只观测 Scheduler 输出和 ModelRunner Forward，不改变调度决策。
 
@@ -773,8 +773,157 @@ Prefill 完成定义：执行完某个 Engine Step 后，`num_cached_tokens >= n
 ### 11.4 验证状态
 
 - 代码已推送到 `chunkprefill` 分支。
-- 尚未在 RTX 3060 Laptop 上运行，不能宣称 Trace 数值已验证。
+- 已在 RTX 3060 Laptop 上通过 32 请求 Smoke 和 cap8 / cap16 各 5 轮正式实验；对应数据见第 12 节。
 - 新 JSON 生成后，先检查每个请求的 `prefill_chunks[0].cached_tokens_before + prefill_total_allocated_tokens == prompt_tokens`（考虑可能命中的 Prefix Cache），且各 Chunk 的 Cached Token 区间连续、不重叠；再分析 cap8 / cap16 的公平性。
 - 新增的 GPU 阶段计时也需要在真实运行中确认事件记录完整且非负。
 
 建议先执行 1 次 32 请求 Smoke，再执行 cap8 / cap16 各 5 轮正式实验。不要将旧 JSON 与新增字段混合统计。
+
+
+------------------------------------------------------------------------
+
+## 12. Decode cap 8 vs 16：请求级公平性正式复测（2026-11-27）
+
+本节是在请求级 Prefill Trace 修复并完成 GPU 验证后，对 Decode 并发上限 8 和 16 进行的 5 组配对实验。它补充验证第 10 节中的 cap8 / cap16 结论，并首次提供请求级累计等待与最大连续等待数据。第 10 节 cap4 / cap8 / cap16 的历史结果仍保留；两次实验的运行批次与记录口径不同，不应把数值混在一起计算。
+
+### 12.1 实验配置与完整性
+
+| 参数 | 配置 |
+|---|---:|
+| 模型 | Qwen3-0.6B |
+| 请求数 | 32 |
+| Prompt 长度分布 | 128 × 11、512 × 11、1024 × 10 |
+| Output Tokens | 8 |
+| `max_num_batched_tokens` | 512 |
+| `max_num_prefill_seqs` | 8 |
+| Decode cap | 8、16 |
+| Execution Mode | CUDA Graph |
+| 请求到达方式 | staggered：首批 4 个，后续每批 4 个，每隔 2 Steps |
+| 随机种子 | 42、43、44、45、46 |
+| 重复次数 | 每档 5 轮，共 10 轮 |
+
+两档配置使用相同的 5 个 Seed，且每个 Seed 都有 cap8 / cap16 对应结果。运行顺序交替，以降低固定运行顺序对结果的影响。
+
+完整性检查：
+- 10 个 JSON 均成功读取，配置中的 Decode cap、Seed、Scenario、Token Budget 与预期一致。
+- 每轮均包含 32 个请求，32 个请求全部完成 Prefill。
+- 每轮均生成 256 个 Output Tokens；总 Prompt Prefill Tokens 为 17,280。
+- `steps` 与 `scheduler_steps` 数组长度均与 `summary.total_steps` 一致。
+- 10 轮均无 KV Allocation Failure、无 Decode Preemption。
+- 所有轮次 Decode Graph Hit Rate 均为 100%，Decode Eager Calls 均为 0。
+
+原始结果位于：
+
+```text
+outputs/benchmark/chunkprefill/decode_cap_sweep/
+├── cap8_run1_seed42.json
+├── cap8_run2_seed43.json
+├── cap8_run3_seed44.json
+├── cap8_run4_seed45.json
+├── cap8_run5_seed46.json
+├── cap16_run1_seed42.json
+├── cap16_run2_seed43.json
+├── cap16_run3_seed44.json
+├── cap16_run4_seed45.json
+└── cap16_run5_seed46.json
+```
+
+### 12.2 整体性能结果
+
+下表为每档 5 轮的均值；时间单位 ms，吞吐量单位 tokens/s。
+
+| 指标 | cap8 | cap16 | cap16 相对 cap8 |
+|---|---:|---:|---:|
+| Total Time | 2903.02 | 2909.44 | +0.22% |
+| Output Throughput | 88.19 | 88.00 | -0.22% |
+| Mean TTFT | 962.10 | 966.70 | +0.48% |
+| Mean TPOT | 60.48 | 60.78 | +0.49% |
+| Mean Request Latency | 1385.48 | 1392.16 | +0.48% |
+| Engine Steps | 44 | 42 | -4.55% |
+
+5 轮样本标准差：
+
+| 指标 | cap8 SD | cap16 SD |
+|---|---:|---:|
+| Total Time | 20.79 ms | 25.69 ms |
+| Output Throughput | 0.63 tok/s | 0.77 tok/s |
+| Mean TTFT | 5.04 ms | 4.21 ms |
+| Mean TPOT | 0.33 ms | 0.78 ms |
+| Mean Request Latency | 6.74 ms | 9.63 ms |
+
+配对 Seed 的结果并非每轮都一致：cap16 在 5 组中有 3 组总耗时更短、2 组更长；吞吐量也是 3 组更高、2 组更低。5 组配对均值显示 cap16 吞吐略低约 0.22%，差异很小，不应据此宣称 cap8 在统计意义上显著更快。
+
+主要观察：
+- cap16 每轮固定减少 2 个 Engine Steps（44 → 42），但没有减少端到端总耗时。
+- cap16 的 Aggregate Token Budget Utilization 从 77.70% 增至 81.40%，提高约 3.70 个百分点；更高的预算利用率没有带来吞吐提升。
+- cap8 在本次实验的吞吐、TTFT、TPOT 和请求延迟均值上略优；优势幅度小，属于当前负载和设备下的实测观察。
+- 这组结果不支持把 Decode cap 从 8 提高到 16 作为性能优化。
+
+### 12.3 Prefill 公平性结果
+
+以下为每轮汇总指标的均值。等待单位为 Engine Steps。
+
+| 指标 | cap8 | cap16 |
+|---|---:|---:|
+| Mean Prefill First-Selection Wait | 0.8125 | 0.8125 |
+| P95 Prefill First-Selection Wait | 2 | 2 |
+| Max Prefill First-Selection Wait | 2 | 2 |
+| Mean Total Prefill Wait | 5.21875 | 5.21875 |
+| P95 Total Prefill Wait | 11 | 11 |
+| Max Total Prefill Wait | 11 | 11 |
+| Mean Max Consecutive Wait | 1.375 | 1.375 |
+| Max Consecutive Wait | 2 | 2 |
+| Mean Chunk Count / Request | 7.84375 | 7.84375 |
+| Mean Prefill Completion Latency | 962.10 ms | 966.70 ms |
+| P95 Prefill Completion Latency | 1918.45 ms | 1926.10 ms |
+
+按 Prompt 长度分组的累计等待与 Chunk 数在两档 Decode cap 下也一致：
+- Prompt=128：平均累计等待 1.455 Steps，平均 Chunk 数 2.091。
+- Prompt=512：平均累计等待 5.636 Steps，平均 Chunk 数 7.636。
+- Prompt=1024：平均累计等待 8.900 Steps，平均 Chunk 数 14.400。
+
+解释：
+- cap16 没有导致本次测试中 Prefill 等待增加；但它也没有改善 Prefill 公平性。
+- 长 Prompt 的累计等待和 Chunk 数更高，主要反映其需要更多次增量 Prefill；不能只凭累计等待绝对值判断调度不公平。
+- 所有请求最大连续等待均不超过 2 个 Engine Steps，说明本负载下没有观察到长时间连续饥饿。
+- 这些指标是当前 32 请求、给定 Prompt 分布和错峰到达模式下的结果，不代表更高并发或其他负载下也不会饥饿。
+
+### 12.4 ModelRunner / Scheduler 诊断
+
+| 指标 | cap8 | cap16 |
+|---|---:|---:|
+| Decode Calls / Run | 43 | 41 |
+| Decode Graph Hit Rate | 100% | 100% |
+| Decode Eager Calls | 0 | 0 |
+| Prefill Calls / Run | 35 | 35 |
+| Aggregate Token Budget Utilization | 77.70% | 81.40% |
+| KV Allocation Failures | 0 | 0 |
+| Decode Preemptions | 0 | 0 |
+| Peak Allocated Delta | 15.01 MiB | 15.01 MiB |
+| Peak Reserved Delta | 6 MiB | 6 MiB |
+
+Graph Hit Rate 表示 Decode ModelRunner 调用路径命中 CUDA Graph 的比例，不代表 GPU Kernel 已达到最优效率。Token Budget Utilization 是 Decode 与 Prefill Token 合并统计的整体预算利用率，不是 Prefill 专属利用率。
+
+### 12.5 配置结论
+
+**当前保留 `max_num_decode_seqs=8` 作为默认配置。**
+
+理由：
+1. cap16 虽然将 Engine Steps 从 44 降到 42，并提高预算利用率，但没有带来吞吐提升。
+2. cap8 的吞吐、TTFT、TPOT 和请求延迟均值略优于 cap16。
+3. 两档配置的 Prefill 累计等待、连续等待、Chunk 数完全一致；cap16 没有表现出公平性优势。
+4. 两者差异总体较小，当前 5 组配对实验不支持“cap8 显著优于 cap16”的统计结论；选择 cap8 是基于当前设备和负载下更均衡的实测结果，而不是普适最优值。
+
+因此不建议为了提高 Token Budget Utilization 或减少两个 Engine Steps 而把默认 Decode cap 提高到 16。后续如果负载特征发生变化，应重新进行针对性 Sweep。
+
+### 12.6 本阶段状态与下一步
+
+- [x] 修复并验证请求级 Prefill 等待统计。
+- [x] 完成 cap8 / cap16 各 5 轮 GPU 配对实验。
+- [x] 验证请求 Prefill Chunk 连续性、完成状态与输出 Token 数。
+- [x] 验证 CUDA Graph 调用路径、KV Allocation Failure 与 Decode Preemption 统计。
+- [x] 根据实测结果保留 Decode cap=8 默认值。
+- [ ] 将本轮 10 个 JSON 的汇总统计脚本化，方便后续复测自动生成 CSV / Markdown。
+- [ ] 在更高请求数和不同 Prompt 分布下验证调度策略，不把当前 32 请求结果外推到 256 并发。
+
+本节结论仅适用于上述模型、设备、32 请求工作负载和参数配置。
