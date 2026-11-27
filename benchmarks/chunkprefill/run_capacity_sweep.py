@@ -33,7 +33,6 @@ def parse_args(argv=None):
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--seed-base", type=int, default=42)
     parser.add_argument("--model", default="/home/chen17/huggingface/Qwen3-0.6B")
-    parser.add_argument("--variant", choices=["baseline", "optimized"], default="optimized")
     parser.add_argument("--decode-cap", type=int, default=8)
     parser.add_argument("--prefill-cap", type=int, default=8)
     parser.add_argument("--output-tokens", type=int, default=8)
@@ -61,7 +60,7 @@ def build_command(args, request_count: int, run_index: int, seed: int, output: P
     benchmark = Path(__file__).with_name("benchmark.py")
     return [
         sys.executable, str(benchmark),
-        "--variant", args.variant,
+        "--variant", "optimized",
         "--scenario", "staggered",
         "--model", args.model,
         "--num-requests", str(request_count),
@@ -85,7 +84,7 @@ def main(argv=None) -> int:
     manifest = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "model": args.model,
-        "variant": args.variant,
+        "variant": "optimized",
         "scenario": "staggered",
         "prompt_lengths": args.prompt_lengths,
         "output_tokens": args.output_tokens,
